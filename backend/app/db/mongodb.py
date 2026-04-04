@@ -1,3 +1,4 @@
+import certifi
 from motor.motor_asyncio import AsyncIOMotorClient
 from app.core.config import settings
 
@@ -8,7 +9,11 @@ class MongoDB:
 db_client = MongoDB()
 
 async def connect_to_mongo():
-    db_client.client = AsyncIOMotorClient(settings.MONGODB_URL)
+    # Use certifi for TLS CA certificates to fix SSL handshake errors
+    db_client.client = AsyncIOMotorClient(
+        settings.MONGODB_URL,
+        tlsCAFile=certifi.where()
+    )
     db_client.db = db_client.client[settings.DATABASE_NAME]
     print(f"Connected to MongoDB: {settings.DATABASE_NAME}")
 

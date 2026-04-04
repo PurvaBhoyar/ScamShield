@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 import os
 import shutil
+from app.services.url_service import extract_text_from_url
 
 # Import System Architecture Schemas (Person A's Contract)
 from app.schemas.scan import ScanResponse
@@ -64,15 +65,19 @@ async def process_scan(
             raise HTTPException(status_code=500, detail="System failed to extract text from the uploaded image.")
 
     # Pipeline Branch 3: URL Analysis
+    # Pipeline Branch 3: URL Analysis
     elif type == "url":
         if not url:
             raise HTTPException(status_code=400, detail="URL is required for type 'url'.")
-        # Placeholder for future URL scraping logic
-        extracted_content = f"Simulated content extracted from the provided URL: {url}"
+        
+        # Execute the URL Scraper Service
+        extracted_content = extract_text_from_url(url)
+        
+        if not extracted_content:
+             raise HTTPException(status_code=500, detail="System failed to extract readable text from the provided URL. The site might be blocking scrapers.")
 
     else:
         raise HTTPException(status_code=400, detail="Invalid scan type. Accepted values are 'text', 'file', or 'url'.")
-
     # Final Stage: Pass the unified extracted content to the AI Brain
     try:
         ai_analysis_result = analyze_text_with_ai(extracted_content)

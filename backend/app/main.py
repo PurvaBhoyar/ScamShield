@@ -4,6 +4,7 @@ from typing import Optional
 import os
 import shutil
 from app.services.url_service import extract_text_from_url
+from urllib.parse import urlparse
 
 # Import System Architecture Schemas (Person A's Contract)
 from app.schemas.scan import ScanResponse
@@ -69,7 +70,8 @@ async def process_scan(
     elif type == "url":
         if not url:
             raise HTTPException(status_code=400, detail="URL is required for type 'url'.")
-        
+        domain = urlparse(url).netloc
+        print(f"Extracted Domain for Person A: {domain}")
         # Execute the URL Scraper Service
         extracted_content = extract_text_from_url(url)
         

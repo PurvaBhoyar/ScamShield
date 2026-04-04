@@ -25,7 +25,7 @@ def analyze_text_with_ai(extracted_text: str) -> dict:
       "company_name": "<string: official company name extracted>",
       "job_title": "<string: job title extracted>",
       "id": "generated_by_ai",
-      "score": <integer from 0 to 100>,
+      "score": <integer from 0 to 100, where 100 is maximum danger>,
       "label": "<string: 'Safe', 'Caution', or 'Danger'>",
       "findings": [
         {

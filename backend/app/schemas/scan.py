@@ -13,7 +13,7 @@ class Action(BaseModel):
     reason: str
 
 class ScanRequest(BaseModel):
-    type: str = Field(..., pattern="^(url|text|file)$")
+    type: str = Field(..., pattern="^(url|text|file|audio)$")
     url: Optional[str] = None
     text: Optional[str] = None
     extractedText: Optional[str] = None

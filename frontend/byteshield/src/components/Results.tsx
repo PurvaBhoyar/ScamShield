@@ -13,7 +13,12 @@ import {
   Building,
   Mail,
   MailWarning,
-  MailCheck
+  MailCheck,
+  Link,
+  Phone,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -51,6 +56,29 @@ interface ResultsData {
   domain?: string;
   domain_info?: DomainInfo;
   domain_reasons?: DomainReason[];
+  verification?: {
+    company?: {
+      official_website?: string;
+      careers_page?: string;
+      linkedin?: string;
+      glassdoor?: string;
+      verified?: boolean;
+      explanation?: string;
+    };
+    location?: {
+      job_location?: string;
+      company_locations?: string[];
+      match_found?: boolean;
+      explanation?: string;
+    };
+    contact?: {
+      emails_found?: string[];
+      domain_mx_status?: string;
+      contact_verified?: boolean;
+      warnings?: string[];
+      explanation?: string;
+    };
+  };
 }
 
 export default function Results({ data }: { data: ResultsData }) {
@@ -357,6 +385,216 @@ export default function Results({ data }: { data: ResultsData }) {
           {hasMxIssue && <MailWarning className="w-5 h-5 flex-shrink-0" />}
           {hasMxValid && <MailCheck className="w-5 h-5 flex-shrink-0" />}
           <span className="text-sm">{mxFinding.message}</span>
+        </div>
+      )}
+    </div>
+  )}
+
+  {/* ================= VERIFICATION SECTION ================= */}
+  {data.verification && (
+    <div className="space-y-6">
+      {/* Company Verification */}
+      {data.verification.company && (
+        <div className="glass rounded-[2rem] p-10 space-y-6 border-white/10">
+          <h3 className="text-2xl font-light tracking-tight flex items-center gap-3">
+            <Building2 className="w-6 h-6" />
+            Company Verification
+          </h3>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Status */}
+            <div className={cn(
+              "p-4 rounded-xl",
+              data.verification.company.verified ? "bg-safe/10 border border-safe/30" : "bg-caution/10 border border-caution/30"
+            )}>
+              <p className="text-xs text-foreground/40 uppercase tracking-wider mb-1">Status</p>
+              <div className="flex items-center gap-2">
+                {data.verification.company.verified ? (
+                  <>
+                    <CheckCircle2 className="w-5 h-5 text-safe" />
+                    <span className="font-medium text-safe">Verified</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="w-5 h-5 text-caution" />
+                    <span className="font-medium text-caution">Not Verified</span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Official Website */}
+            <div className="p-4 rounded-xl bg-foreground/[0.03]">
+              <p className="text-xs text-foreground/40 uppercase tracking-wider mb-1">Website</p>
+              <a href={data.verification.company.official_website || '#'} target="_blank" rel="noopener noreferrer" className="font-medium text-blue-400 hover:underline truncate block">
+                {data.verification.company.official_website || 'Not found'}
+              </a>
+            </div>
+
+            {/* Careers Page */}
+            <div className="p-4 rounded-xl bg-foreground/[0.03]">
+              <p className="text-xs text-foreground/40 uppercase tracking-wider mb-1">Careers Page</p>
+              {data.verification.company.careers_page ? (
+                <a href={data.verification.company.careers_page} target="_blank" rel="noopener noreferrer" className="font-medium text-green-400 hover:underline truncate block">
+                  Found
+                </a>
+              ) : (
+                <span className="font-medium text-foreground/60">Not found</span>
+              )}
+            </div>
+
+            {/* LinkedIn */}
+            <div className="p-4 rounded-xl bg-foreground/[0.03]">
+              <p className="text-xs text-foreground/40 uppercase tracking-wider mb-1">LinkedIn</p>
+              {data.verification.company.linkedin ? (
+                <a href={data.verification.company.linkedin} target="_blank" rel="noopener noreferrer" className="font-medium text-blue-400 hover:underline truncate block">
+                  Found
+                </a>
+              ) : (
+                <span className="font-medium text-foreground/60">Not found</span>
+              )}
+            </div>
+          </div>
+
+          {/* Explanation */}
+          {data.verification.company.explanation && (
+            <div className="p-4 rounded-xl bg-foreground/[0.03]">
+              <p className="text-sm text-foreground/80">{data.verification.company.explanation}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Location Verification */}
+      {data.verification.location && (
+        <div className="glass rounded-[2rem] p-10 space-y-6 border-white/10">
+          <h3 className="text-2xl font-light tracking-tight flex items-center gap-3">
+            <MapPin className="w-6 h-6" />
+            Location Verification
+          </h3>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Job Location */}
+            <div className="p-4 rounded-xl bg-foreground/[0.03]">
+              <p className="text-xs text-foreground/40 uppercase tracking-wider mb-1">Job Location</p>
+              <p className="font-medium">{data.verification.location.job_location || 'Not specified'}</p>
+            </div>
+
+            {/* Match Status */}
+            <div className={cn(
+              "p-4 rounded-xl",
+              data.verification.location.match_found ? "bg-safe/10 border border-safe/30" : "bg-caution/10 border border-caution/30"
+            )}>
+              <p className="text-xs text-foreground/40 uppercase tracking-wider mb-1">Match Status</p>
+              <div className="flex items-center gap-2">
+                {data.verification.location.match_found ? (
+                  <>
+                    <CheckCircle2 className="w-5 h-5 text-safe" />
+                    <span className="font-medium text-safe">Matched</span>
+                  </>
+                ) : (
+                  <>
+                    <XCircle className="w-5 h-5 text-caution" />
+                    <span className="font-medium text-caution">Not Matched</span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Company Locations */}
+          {data.verification.location.company_locations && data.verification.location.company_locations.length > 0 && (
+            <div className="p-4 rounded-xl bg-foreground/[0.03]">
+              <p className="text-xs text-foreground/40 uppercase tracking-wider mb-2">Known Company Locations</p>
+              <div className="flex flex-wrap gap-2">
+                {data.verification.location.company_locations.slice(0, 3).map((loc, idx) => (
+                  <span key={idx} className="px-3 py-1 rounded-full bg-foreground/10 text-sm">
+                    {loc}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Explanation */}
+          {data.verification.location.explanation && (
+            <div className="p-4 rounded-xl bg-foreground/[0.03]">
+              <p className="text-sm text-foreground/80">{data.verification.location.explanation}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Contact Verification */}
+      {data.verification.contact && (
+        <div className="glass rounded-[2rem] p-10 space-y-6 border-white/10">
+          <h3 className="text-2xl font-light tracking-tight flex items-center gap-3">
+            <Mail className="w-6 h-6" />
+            Contact Verification
+          </h3>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* Contact Status */}
+            <div className={cn(
+              "p-4 rounded-xl",
+              data.verification.contact.contact_verified ? "bg-safe/10 border border-safe/30" : "bg-danger/10 border border-danger/30"
+            )}>
+              <p className="text-xs text-foreground/40 uppercase tracking-wider mb-1">Contact Status</p>
+              <div className="flex items-center gap-2">
+                {data.verification.contact.contact_verified ? (
+                  <>
+                    <CheckCircle2 className="w-5 h-5 text-safe" />
+                    <span className="font-medium text-safe">Verified</span>
+                  </>
+                ) : (
+                  <>
+                    <XCircle className="w-5 h-5 text-danger" />
+                    <span className="font-medium text-danger">Suspicious</span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Emails Found */}
+            <div className="p-4 rounded-xl bg-foreground/[0.03]">
+              <p className="text-xs text-foreground/40 uppercase tracking-wider mb-1">Contact Email(s)</p>
+              {data.verification.contact.emails_found && data.verification.contact.emails_found.length > 0 ? (
+                <div className="flex flex-col gap-1">
+                  {data.verification.contact.emails_found.slice(0, 2).map((email, idx) => (
+                    <span key={idx} className="font-medium text-sm truncate">{email}</span>
+                  ))}
+                </div>
+              ) : (
+                <span className="font-medium text-foreground/60">None found</span>
+              )}
+            </div>
+
+            {/* MX Status */}
+            <div className="p-4 rounded-xl bg-foreground/[0.03]">
+              <p className="text-xs text-foreground/40 uppercase tracking-wider mb-1">Mail Server Status</p>
+              <span className="font-medium">{data.verification.contact.domain_mx_status || 'Unknown'}</span>
+            </div>
+          </div>
+
+          {/* Warnings */}
+          {data.verification.contact.warnings && data.verification.contact.warnings.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs text-danger uppercase tracking-wider">Warnings</p>
+              {data.verification.contact.warnings.map((warning, idx) => (
+                <div key={idx} className="p-3 rounded-lg bg-danger/10 flex gap-2 items-center text-danger">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  <span className="text-sm">{warning}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Explanation */}
+          {data.verification.contact.explanation && (
+            <div className="p-4 rounded-xl bg-foreground/[0.03]">
+              <p className="text-sm text-foreground/80">{data.verification.contact.explanation}</p>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,84 +1,125 @@
 import os
 import json
-import google.generativeai as genai
+import re
+from pathlib import Path
+from google import genai
+from groq import Groq
 from dotenv import load_dotenv
 
-# Initialize environment and client
-load_dotenv()
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+# Load .env from backend directory
+env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(env_path)
+
+# 1. Initialize Gemini Client
+_google_raw = os.getenv("GOOGLE_API_KEY", "").strip()
+GOOGLE_API_KEY = "".join(char for char in _google_raw if 32 <= ord(char) <= 126).strip()
+gemini_client = genai.Client(api_key=GOOGLE_API_KEY) if GOOGLE_API_KEY else None
+
+# 2. Initialize Groq Client (Fallback)
+_groq_raw = os.getenv("GROQ_API_KEY", "").strip()
+GROQ_API_KEY = "".join(char for char in _groq_raw if 32 <= ord(char) <= 126).strip()
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+
+def _local_fallback_analysis(text: str) -> dict:
+    """Hard-coded keyword analysis if all APIs fail."""
+    findings = []
+    text_lower = text.lower()
+    
+    # Red Flag Keywords
+    patterns = {
+        "payment_request": ["registration fee", "security deposit", "processing fee", "deposit", "pay to join"],
+        "urgency": ["apply immediately", "limited slots", "urgent hiring", "act fast"],
+        "pii_request": ["aadhaar", "pan card", "bank account", "passport", "otp", "cvv"]
+    }
+    
+    for f_type, keywords in patterns.items():
+        for kw in keywords:
+            if kw in text_lower:
+                findings.append({
+                    "type": f_type,
+                    "severity": "critical" if f_type != "urgency" else "high",
+                    "message": f"Detected {f_type.replace('_', ' ')}: '{kw}'"
+                })
+                break
+
+    return {
+        "company_name": "Unknown",
+        "job_title": "Unknown",
+        "location": "Remote",
+        "id": "local_fallback",
+        "findings": findings
+    }
 
 def analyze_text_with_ai(extracted_text: str) -> dict:
-    """
-    Analyzes extracted text using Gemini and returns a dictionary 
-    formatted to match the ScanResponse Pydantic schema.
-    """
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    """Primary: Gemini 2.0 -> Secondary: Groq Llama 3.1 -> Tertiary: Local."""
+    
+    SYSTEM_PROMPT = """You are an elite cyber-forensics investigator specializing in recruitment fraud.
+Analyze the provided job description/text and extract key entities. 
+Then, identify specific 'red flags' based on these categories:
+1. payment_request: Asking for money, deposits, or fees.
+2. pii_request: Asking for sensitive data (PAN, Aadhaar, Bank, OTP).
+3. urgency: Using high-pressure tactics or artificial deadlines.
+4. unrealistic_salary: Compensation that is far above market rates.
 
-    system_instruction = """
-    You are an expert scam investigator. Analyze the text for specific red flags:
-    1. Financial Requests: Any mention of deposit, fee, or payment for joining.
-    2. Psychological Pressure: Urgency, limited slots, or "act now" tactics.
-    3. Inconsistencies: Hinglish, poor grammar, or suspicious recruiter domains.
-    4. PII Data: Requests for Aadhar, PAN, or Bank Details early.
-    
-    You MUST extract the 'company_name' and 'job_title' if available. 
-    If not found, set them to "Unknown".
-    
-    You MUST respond ONLY with a valid JSON object matching the exact schema below. 
-    Do not include markdown formatting.
-    
-    REQUIRED JSON SCHEMA:
+Return ONLY a JSON object:
+{
+  "company_name": "Extract exact company name or 'Unknown'",
+  "job_title": "Extract job title or 'Unknown'",
+  "location": "Extract city/state/country or 'Remote'",
+  "findings": [
     {
-      "company_name": "<string: official company name extracted>",
-      "job_title": "<string: job title extracted>",
-      "id": "generated_by_ai",
-      "score": <integer from 0 to 100>,
-      "label": "<string: 'Safe', 'Caution', or 'Danger'>",
-      "findings": [
-        {
-          "type": "payment_request|urgency|pii_request|grammar",
-          "severity": "low|medium|high|critical",
-          "message": "<string explanation>"
-        }
-      ],
-      "evidence": ["<evidence snippet>"],
-      "actions": ["<recommendation>"]
+      "type": "payment_request|pii_request|urgency|unrealistic_salary",
+      "severity": "low|medium|high|critical",
+      "message": "Specific explanation of why this is a red flag"
     }
-    """
+  ]
+}"""
 
-    try:
-        # Check if the model supports JSON response natively (v0.8.0+)
-        # If not, fallback to plain text generation and manual JSON parsing
+    # Clean input text
+    text_to_analyze = extracted_text[:15000] # Token limit safety
+    
+    # --- STEP 1: TRY GEMINI (New SDK) ---
+    if gemini_client:
+        for model_id in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+            try:
+                response = gemini_client.models.generate_content(
+                    model=model_id,
+                    contents=[SYSTEM_PROMPT, text_to_analyze],
+                    config={"response_mime_type": "application/json"}
+                )
+                if response and response.text:
+                    raw_text = response.text
+                    if "```json" in raw_text:
+                        raw_text = raw_text.split("```json")[1].split("```")[0].strip()
+                    elif "```" in raw_text:
+                        raw_text = raw_text.split("```")[1].split("```")[0].strip()
+                    
+                    result = json.loads(raw_text)
+                    result["id"] = f"gemini_{model_id}"
+                    return result
+            except Exception as e:
+                print(f"⚠️ Gemini {model_id} Error: {str(e)[:100]}")
+                continue
+
+    # --- STEP 2: TRY GROQ FALLBACK ---
+    if groq_client:
         try:
-            response = model.generate_content(
-                f"{system_instruction}\n\nTEXT TO ANALYZE:\n{extracted_text}",
-                generation_config={"response_mime_type": "application/json"}
+            print("🔄 Falling back to Groq (Llama 3.1)...")
+            response = groq_client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": text_to_analyze}
+                ],
+                temperature=0.1,
+                response_format={"type": "json_object"}
             )
-            raw_text = response.text
-        except (TypeError, ValueError):
-            # Fallback for older SDK versions that don't support response_mime_type
-            response = model.generate_content(
-                f"{system_instruction}\n\nTEXT TO ANALYZE:\n{extracted_text}\n\nIMPORTANT: Return ONLY the JSON object, no markdown."
-            )
-            raw_text = response.text
-            # Clean up potential markdown blocks
-            if "```json" in raw_text:
-                raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in raw_text:
-                raw_text = raw_text.split("```")[1].split("```")[0].strip()
-        
-        # Convert the JSON string response into a Python dictionary
-        return json.loads(raw_text)
+            result = json.loads(response.choices[0].message.content)
+            result["id"] = "groq_fallback"
+            return result
+        except Exception as e:
+            print(f"⚠️ Groq Error: {str(e)[:100]}")
 
-    except Exception as e:
-        # Fallback mechanism in case of API failure
-        print(f"AI Analysis Error: {e}")
-        return {
-            "id": "error_fallback",
-            "score": 0,
-            "label": "Safe",
-            "findings": [],
-            "evidence": ["AI processing failed."],
-            "actions": ["Manual review recommended."],
-            "policyLog": [{"action": "ai_analysis", "status": "failed", "reason": str(e)}]
-        }
+    # --- STEP 3: LOCAL FAILSAFE ---
+    print("🚨 All AI APIs failed. Using local keyword engine.")
+    return _local_fallback_analysis(extracted_text)

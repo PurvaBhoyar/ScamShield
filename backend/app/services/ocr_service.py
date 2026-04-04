@@ -10,8 +10,13 @@ client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 def extract_text_from_image(image_path: str) -> str:
     """
     Extracts raw text from an uploaded image file using Gemini's multimodal capabilities.
+    Uses multiple models as fallback for quota issues.
     """
-    model_id = 'gemini-1.5-flash'
+    models_to_try = [
+        'gemini-2.0-flash-lite',
+        'gemini-1.5-flash',
+        'gemini-2.0-flash'
+    ]
     
     try:
         # Load the image using Pillow (PIL)
@@ -27,13 +32,20 @@ def extract_text_from_image(image_path: str) -> str:
         
         print(f"Processing OCR for: {image_path}...")
         
-        # Pass both the instruction and the image object to Gemini
-        response = client.models.generate_content(
-            model=model_id,
-            contents=[system_instruction, image_data]
-        )
-        
-        return response.text.strip()
+        for model_id in models_to_try:
+            try:
+                # Pass both the instruction and the image object to Gemini
+                response = client.models.generate_content(
+                    model=model_id,
+                    contents=[system_instruction, image_data]
+                )
+                if response and response.text:
+                    return response.text.strip()
+            except Exception as model_err:
+                print(f"Gemini OCR {model_id} Error: {model_err}. Trying next...")
+                continue
+                
+        return "" # All models failed
         
     except Exception as e:
         print(f"OCR Processing Error: {e}")

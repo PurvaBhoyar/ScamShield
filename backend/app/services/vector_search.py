@@ -1,4 +1,5 @@
-import google.generativeai as genai
+import os
+import requests
 from typing import List, Dict
 from app.core.config import settings
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -7,9 +8,26 @@ class VectorSearchService:
     @staticmethod
     async def get_embedding(text: str) -> List[float]:
         if not settings.GOOGLE_API_KEY: return []
-        genai.configure(api_key=settings.GOOGLE_API_KEY)
-        result = genai.embed_content(model="models/text-embedding-004", content=text, task_type="retrieval_query")
-        return result['embedding']
+        try:
+            # Use correct Google Embedding API format
+            # Using v1beta for model support (some regions require it for 004)
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={settings.GOOGLE_API_KEY}"
+            payload = {
+                "content": {
+                    "role": "user",
+                    "parts": [{"text": text}]
+                },
+                "task_type": "RETRIEVAL_QUERY"
+            }
+            response = requests.post(url, json=payload)
+            if response.ok:
+                data = response.json()
+                return data.get("embedding", {}).get("values", [])
+            else:
+                print(f"Embedding Error: {response.status_code} {response.text[:200]}")
+        except Exception as e:
+            print(f"Embedding Error: {e}")
+        return []
 
     @staticmethod
     async def find_similar_scams(db: AsyncIOMotorDatabase, text: str, threshold: float = 0.85) -> List[Dict]:

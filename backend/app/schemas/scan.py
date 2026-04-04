@@ -1,11 +1,16 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 class Finding(BaseModel):
     type: str
     severity: str
     message: str
+    # Evidence-first fields
+    source_url: Optional[str] = None
+    raw_data: Optional[Dict[str, Any]] = None
+    layer: Optional[str] = None
+    points: Optional[int] = 0
 
 class Action(BaseModel):
     action: str
@@ -18,13 +23,23 @@ class ScanRequest(BaseModel):
     text: Optional[str] = None
     extractedText: Optional[str] = None
 
+class ScoreBreakdown(BaseModel):
+    """Detailed breakdown of the scoring for UI transparency"""
+    deterministic: int
+    probabilistic: int
+    trust_bonus: int
+    net_score: int
+
 class ScanResponse(BaseModel):
     id: str
+    request_hash: Optional[str] = None
     company_name: Optional[str] = "Unknown"
     job_title: Optional[str] = "Unknown"
     location: Optional[str] = "Not Found"
     score: int
     label: str
+    # Score breakdown for UI transparency
+    score_breakdown: Optional[ScoreBreakdown] = None
     findings: List[Finding]
     evidence: List[str]
     actions: List[str]

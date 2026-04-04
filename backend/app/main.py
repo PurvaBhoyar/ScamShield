@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.db.mongodb import connect_to_mongo, close_mongo_connection, get_database
-from app.schemas.scan import ScanRequest, ScanResponse, Finding
+from app.schemas.scan import ScanRequest, ScanResponse, Finding, ScoreBreakdown
 from app.services.rule_engine import RuleEngine
 from app.services.scoring import ScoringService
 from app.services.threat_intel import ThreatIntelService
@@ -24,6 +24,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.services.url_service import extract_text_from_url
 from app.services.domain_service import analyze_domain
 from app.services.verification_service import run_verification
+from app.services.verification_layers import EightLayerVerifier
+from app.core.utils import generate_request_hash
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -49,8 +51,28 @@ async def perform_parallel_scan(
     url: Optional[str] = Form(None),
     text: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
+    refresh: bool = Form(False),
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
+    # --- PHASE 0: Caching Check ---
+    file_content = None
+    if file:
+        file_content = await file.read()
+        await file.seek(0) # Reset pointer for later use
+    
+    request_hash = generate_request_hash(type, url, text, file_content)
+    
+    if db is not None and not refresh:
+        cached_result = await db.scans.find_one({"request_hash": request_hash})
+        if cached_result:
+            # Cache any valid result (has label) - even Safe results
+            if cached_result.get("label"):
+                print(f"Cache Hit for {type}: {request_hash}")
+                cached_result.pop("_id", None)
+                return ScanResponse(**cached_result)
+            else:
+                print(f"Invalid cache for {request_hash}, re-scanning...")
+
     all_findings = []
     extracted_text = text or ""
     audio_path = None
@@ -93,7 +115,7 @@ async def perform_parallel_scan(
         findings = []
         metadata = {"company": "Unknown", "title": "Unknown", "location": "Not Found"}
         
-        # 🧠 Brain Agent: Extract entities using Gemini
+        # 🧠 Brain Agent: Extract entities using Groq/Gemini
         ai_res = await asyncio.to_thread(analyze_text_with_ai, text)
         if isinstance(ai_res, dict):
             # Include soft findings from AI analysis (Urgency, Tone, etc.)
@@ -106,19 +128,18 @@ async def perform_parallel_scan(
             metadata["company"] = company
             metadata["title"] = ai_res.get("job_title", "Unknown Title")
             
-            # 🕵️ Research Agents: Launch deep-web verification in parallel
-            expert_results = await asyncio.gather(
-                PlatformVerifier.verify_job_publicly(company, metadata["title"]),
-                PlatformVerifier.verify_official_careers(company, metadata["title"]),
-                PlatformVerifier.verify_company_location(company),
-                return_exceptions=True
+            # 🕵️ Professional 8-Layer Verification (Evidence-First)
+            # This replaces the old expert_results logic with the new standard
+            layer_res = await EightLayerVerifier.verify_all(
+                text, url, company, metadata["title"], metadata["location"]
             )
-            for res in expert_results:
-                if isinstance(res, list):
-                    for f in res:
-                        findings.append(f)
-                        if f.get("type") == "company_location_found":
-                            metadata["location"] = f.get("message", "").split(": ")[-1]
+            
+            if "findings" in layer_res:
+                findings.extend(layer_res["findings"])
+            if "metadata" in layer_res:
+                # Update location if found in layers
+                if layer_res["metadata"].get("location") and layer_res["metadata"]["location"] != "Not Found":
+                    metadata["location"] = layer_res["metadata"]["location"]
         
         return {"findings": findings, "metadata": metadata}
 
@@ -138,7 +159,7 @@ async def perform_parallel_scan(
         
         # Vector Search: Template match in MongoDB
         tasks.append(VectorSearchService.find_similar_scams(db, extracted_text))
-        
+
         # Agentic Research Flow (Starts after AI identifies company)
         tasks.append(run_ai_and_verify(extracted_text, fallback_company))
 
@@ -161,20 +182,26 @@ async def perform_parallel_scan(
         if isinstance(res, list):
             all_findings.extend(res)
         elif isinstance(res, dict):
+            # General findings and metadata
             if "findings" in res:
                 all_findings.extend(res["findings"])
             if "metadata" in res:
                 metadata.update(res["metadata"])
-            # Handle domain analysis results
-            if "reasons" in res and "domain" in res:
-                all_findings.extend(res["reasons"])
-                domain_info = res.get("details")
-                domain_reasons = res.get("reasons", [])
+            # Handle domain analysis results specifically
+            if "domain" in res:
                 scanned_domain = res.get("domain")
+                domain_info = res.get("details") or res.get("domain_info")
+                # Add domain-specific findings if not already in 'findings'
+                if "reasons" in res:
+                    all_findings.extend(res["reasons"])
+                    domain_reasons = res["reasons"]
+                elif "findings" in res and res.get("domain"):
+                     domain_reasons = res["findings"]
 
     # --- PHASE 3: Multi-Factor Verdict ---
     score_result = ScoringService.calculate_score(all_findings)
-    recommendations = ScoringService.generate_recommendations(score_result["label"], all_findings)
+    final_findings = score_result.get("findings", all_findings)
+    recommendations = ScoringService.generate_recommendations(score_result["label"], final_findings)
 
     # --- PHASE 4: Company/Location/Contact Verification ---
     verification = await run_verification(
@@ -187,13 +214,15 @@ async def perform_parallel_scan(
 
     response = ScanResponse(
         id=str(uuid.uuid4()),
+        request_hash=request_hash,
         company_name=metadata["company"],
         job_title=metadata["title"],
         location=metadata["location"],
         score=score_result["score"],
         label=score_result["label"],
-        findings=[Finding(**f) for f in all_findings if isinstance(f, dict)],
-        evidence=[f["message"] for f in all_findings if isinstance(f, dict) and "message" in f],
+        score_breakdown=ScoreBreakdown(**score_result["breakdown"]) if "breakdown" in score_result else None,
+        findings=[Finding(**f) for f in final_findings if isinstance(f, dict)],
+        evidence=[f["message"] for f in final_findings if isinstance(f, dict) and "message" in f],
         actions=recommendations,
         createdAt=datetime.utcnow(),
         domain=scanned_domain,
@@ -205,9 +234,15 @@ async def perform_parallel_scan(
     # Persistence
     if db is not None:
         try:
-            await db.scans.insert_one(response.dict())
+            # UPSERT: Replace existing result for the same content if it exists
+            # This handles 'refresh=True' properly and avoids double-storing
+            await db.scans.replace_one(
+                {"request_hash": request_hash},
+                response.dict(),
+                upsert=True
+            )
         except Exception as e:
-            print(f"DB Insert Error: {e}")
+            print(f"DB Update Error: {e}")
     else:
         print("Warning: Database not connected. Result not saved.")
         

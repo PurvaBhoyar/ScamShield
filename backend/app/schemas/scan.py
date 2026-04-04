@@ -30,6 +30,10 @@ class ScanResponse(BaseModel):
     actions: List[str]
     policyLog: Optional[List[Action]] = []
     createdAt: datetime = Field(default_factory=datetime.utcnow)
+    # Domain analysis fields
+    domain: Optional[str] = None
+    domain_info: Optional[dict] = None
+    domain_reasons: Optional[List[dict]] = None
 
 class ScanHistory(BaseModel):
     id: str

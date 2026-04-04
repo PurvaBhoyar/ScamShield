@@ -1,0 +1,5 @@
+{
+  "name": "ByteShield",
+  "description": "AI-powered scam detection platform for verifying suspicious links, messages, and documents.",
+  "requestFramePermissions": []
+}

@@ -22,6 +22,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 # Add missing service for URL content extraction
 from app.services.url_service import extract_text_from_url
+from app.services.domain_service import analyze_domain
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -123,6 +124,8 @@ async def perform_parallel_scan(
     # 1. Forensic & Text Logic Tasks
     if type == "url" and url:
         tasks.append(asyncio.to_thread(RuleEngine.analyze_url, url))
+        # Domain age and risk analysis
+        tasks.append(asyncio.to_thread(analyze_domain, url))
     
     if extracted_text:
         # Rule-based text analysis (Blacklist words, patterns)
@@ -149,6 +152,10 @@ async def perform_parallel_scan(
     if audio_path and os.path.exists(audio_path): os.remove(audio_path)
 
     metadata = {"company": "Unknown", "title": "Unknown", "location": "Not Found"}
+    domain_info = None
+    domain_reasons = []
+    scanned_domain = None
+
     for res in results:
         if isinstance(res, list):
             all_findings.extend(res)
@@ -157,6 +164,12 @@ async def perform_parallel_scan(
                 all_findings.extend(res["findings"])
             if "metadata" in res:
                 metadata.update(res["metadata"])
+            # Handle domain analysis results
+            if "reasons" in res and "domain" in res:
+                all_findings.extend(res["reasons"])
+                domain_info = res.get("details")
+                domain_reasons = res.get("reasons", [])
+                scanned_domain = res.get("domain")
 
     # --- PHASE 3: Multi-Factor Verdict ---
     score_result = ScoringService.calculate_score(all_findings)
@@ -172,7 +185,10 @@ async def perform_parallel_scan(
         findings=[Finding(**f) for f in all_findings if isinstance(f, dict)],
         evidence=[f["message"] for f in all_findings if isinstance(f, dict) and "message" in f],
         actions=recommendations,
-        createdAt=datetime.utcnow()
+        createdAt=datetime.utcnow(),
+        domain=scanned_domain,
+        domain_info=domain_info,
+        domain_reasons=domain_reasons
     )
     
     # Persistence

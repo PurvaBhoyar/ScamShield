@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     MONGODB_URL: str = "mongodb://localhost:27017"
     DATABASE_NAME: str = "scamshield"
     GOOGLE_API_KEY: str = ""
+    ELEVENLABS_API_KEY: str = ""
+    SERPAPI_API_KEY: str = ""
     
     SECRET_KEY: str = "secret"
     ALGORITHM: str = "HS256"

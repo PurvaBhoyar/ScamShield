@@ -10,7 +10,10 @@ import {
   Search,
   Globe,
   Calendar,
-  Building
+  Building,
+  Mail,
+  MailWarning,
+  MailCheck
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -87,6 +90,11 @@ export default function Results({ data }: { data: ResultsData }) {
   // Check if domain analysis is available
   const hasDomainInfo = data.domain_info && data.domain;
   const domainAge = data.domain_info?.age_days;
+
+  // Check for MX-related findings
+  const mxFinding = data.findings.find(f => f.type === 'no_mx' || f.type === 'null_mx' || f.type === 'mx_records_found');
+  const hasMxIssue = mxFinding && (mxFinding.type === 'no_mx' || mxFinding.type === 'null_mx');
+  const hasMxValid = mxFinding && mxFinding.type === 'mx_records_found';
 
   return (
     <motion.div
@@ -292,6 +300,63 @@ export default function Results({ data }: { data: ResultsData }) {
               </div>
             );
           })}
+        </div>
+      )}
+    </div>
+  )}
+
+  {/* ================= EMAIL/MX ANALYSIS ================= */}
+  {hasDomainInfo && (
+    <div className="glass rounded-[2rem] p-10 space-y-6 border-white/10">
+      <h3 className="text-2xl font-light tracking-tight flex items-center gap-3">
+        <Mail className="w-6 h-6" />
+        Mail Server Check
+      </h3>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Email Status */}
+        <div className={cn(
+          "p-4 rounded-xl",
+          hasMxIssue ? "bg-danger/10 border border-danger/30" :
+          hasMxValid ? "bg-safe/10 border border-safe/30" :
+          "bg-foreground/[0.03] dark:bg-white/[0.03]"
+        )}>
+          <p className="text-xs text-foreground/40 uppercase tracking-wider mb-1">Can Receive Mail?</p>
+          <div className="flex items-center gap-2">
+            {hasMxIssue && <MailWarning className="w-5 h-5 text-danger" />}
+            {hasMxValid && <MailCheck className="w-5 h-5 text-safe" />}
+            {!hasMxIssue && !hasMxValid && <Mail className="w-5 h-5 text-foreground/60" />}
+            <p className={cn(
+              "font-medium",
+              hasMxIssue ? "text-danger" :
+              hasMxValid ? "text-safe" :
+              "text-foreground/60"
+            )}>
+              {hasMxIssue ? "No - Cannot Receive Mail" :
+               hasMxValid ? "Yes - Can Receive Mail" :
+               "Unknown"}
+            </p>
+          </div>
+        </div>
+
+        {/* Domain Info */}
+        <div className="p-4 rounded-xl bg-foreground/[0.03] dark:bg-white/[0.03]">
+          <p className="text-xs text-foreground/40 uppercase tracking-wider mb-1">Domain</p>
+          <p className="font-medium">{data.domain}</p>
+        </div>
+      </div>
+
+      {/* MX Warning/Success Message */}
+      {mxFinding && (
+        <div className={cn(
+          "p-4 rounded-xl flex gap-3 items-center",
+          hasMxIssue ? "bg-danger/10 text-danger" :
+          hasMxValid ? "bg-safe/10 text-safe" :
+          "bg-foreground/[0.03]"
+        )}>
+          {hasMxIssue && <MailWarning className="w-5 h-5 flex-shrink-0" />}
+          {hasMxValid && <MailCheck className="w-5 h-5 flex-shrink-0" />}
+          <span className="text-sm">{mxFinding.message}</span>
         </div>
       )}
     </div>

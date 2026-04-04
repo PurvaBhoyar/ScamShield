@@ -17,7 +17,18 @@ class ScoringService:
         
         # Risk cannot be negative, but trust bonus can lower risk
         final_score = max(0, min(total_risk, 100))
-        label = "Safe" if final_score < 30 else "Caution" if final_score < 75 else "Danger"
+        
+        # New "Hardened" thresholds: 
+        # Safe (< 15): No red flags found or major trust bonus verified.
+        # Caution (15 - 40): Soft signals or single high-risk operational anomaly.
+        # Danger (> 40): Critical scam intent (fee, blacklist) or multiple high anomalies.
+        if final_score < 15:
+            label = "Safe"
+        elif final_score <= 40:
+            label = "Caution"
+        else:
+            label = "Danger"
+            
         return {"score": final_score, "label": label}
 
     @staticmethod
@@ -32,6 +43,7 @@ class ScoringService:
             if "pii_request" in types: actions.append("Avoid sharing Aadhar/PAN details early on.")
             if "no_mx" in types or "null_mx" in types: actions.append("The recruiter domain cannot receive emails; highly suspicious.")
             if "agent_no_record" in types: actions.append("This job could not be verified on LinkedIn or official portals. Confirm via a phone call.")
+            if "no_official_listing" in types: actions.append("The job listing was not found on the company's official website. Please reach out to their HR directly.")
             if "company_location_missing" in types: actions.append("Could not find a physical office for this company. Verify its legal registration.")
             if "template_match" in types: actions.append("This job matches a known scam template. Do not proceed.")
         return list(set(actions))

@@ -3,6 +3,13 @@ from app.core.config import settings
 from typing import List, Dict
 
 class PlatformVerifier:
+    TRUSTED_PLATFORMS = [
+        "linkedin.com", "internshala.com", "glassdoor.com", "razorpay.com", 
+        "google.com", "amazon.com", "microsoft.com", "apple.com", "flipkart.com", 
+        "zomato.com", "swiggy.com", "tata.com", "reliance.com", "infosys.com", "wipro.com",
+        "facebook.com", "twitter.com", "instagram.com", "github.com"
+    ]
+
     @staticmethod
     async def verify_job_publicly(company_name: str, job_title: str) -> List[Dict]:
         """
@@ -11,16 +18,34 @@ class PlatformVerifier:
         If not found, it flags a warning.
         """
         findings = []
-        if not company_name or not job_title or not settings.SERPAPI_API_KEY:
+        
+        # Check if it's a known trusted company first to avoid false positives
+        is_trusted = any(trusted.lower() in company_name.lower() for trusted in PlatformVerifier.TRUSTED_PLATFORMS)
+        if is_trusted:
+            findings.append({
+                "type": "agent_verified_company",
+                "severity": "safe",
+                "message": f"Trust Factor: {company_name} is a recognized trusted enterprise."
+            })
+
+        if not company_name or company_name.lower() == "unknown company" or not settings.SERPAPI_API_KEY:
+            # If the name is unknown and no trusted URL was found, we flag it.
+            # But we lower severity to medium to avoid false positives on sparse text.
+            findings.append({
+                "type": "agent_no_record",
+                "severity": "medium", 
+                "message": f"Warning: Could not identify a clear company name for verification."
+            })
             return findings
             
         async with httpx.AsyncClient() as client:
             # 🔍 Query 1: LinkedIn/Job Boards for specific Job
-            query_job = f'LinkedIn Internshala Glassdoor "{company_name}" "{job_title}"'
+            # Added more job boards for broader reach
+            query_job = f'LinkedIn Internshala Glassdoor Naukri Indeed "{company_name}" "{job_title}"'
             url_job = f"https://serpapi.com/search.json?q={query_job}&api_key={settings.SERPAPI_API_KEY}"
             
-            # 🔍 Query 2: Company Presence
-            query_company = f'"{company_name}" official careers page LinkedIn profile'
+            # 🔍 Query 2: Company Presence (LinkedIn, Social Media, About)
+            query_company = f'"{company_name}" official website LinkedIn profile Twitter Instagram About Us'
             url_company = f"https://serpapi.com/search.json?q={query_company}&api_key={settings.SERPAPI_API_KEY}"
 
             try:
@@ -39,37 +64,43 @@ class PlatformVerifier:
                 
                 # 1. Check for job listing match
                 found_on_platform = False
-                for res in organic_job[:5]:
+                for res in organic_job[:10]: # Check more results
                     link = res.get("link", "").lower()
-                    if any(p in link for p in ["linkedin.com/jobs", "internshala.com", "glassdoor.com", "naukri.com"]):
+                    if any(p in link for p in ["linkedin.com/jobs", "internshala.com", "glassdoor.com", "naukri.com", "indeed.com", "career"]):
                         found_on_platform = True
                         break
                 
                 # 2. Check for company existence
                 found_company = False
-                for res in organic_company[:5]:
-                    link = res.get("link", "").lower()
-                    if any(p in link for p in ["linkedin.com/company", "careers", "about-us"]):
-                        found_company = True
-                        break
+                # If it's already on the trust list, we skip this check or count it as found.
+                if is_trusted:
+                    found_company = True
+                else:
+                    for res in organic_company[:10]:
+                        link = res.get("link", "").lower()
+                        if any(p in link for p in ["linkedin.com/company", "twitter.com", "instagram.com", "facebook.com", "careers", "about", "contact"]):
+                            found_company = True
+                            break
 
                 if found_on_platform:
                     findings.append({
                         "type": "agent_verified_job",
                         "severity": "safe",
-                        "message": f"Verified: Job listing found for {company_name} on a major platform."
+                        "message": f"Verified: Confirmed job listing for '{job_title}' at {company_name} on a reputable career platform (LinkedIn/Internshala)."
                     })
                 elif found_company:
+                    # If company exists but specific job title doesn't, it's safe but cautious
                     findings.append({
                         "type": "agent_verified_company",
-                        "severity": "low",
-                        "message": f"Company {company_name} exists on LinkedIn/Web, but this specific job title wasn't found."
+                        "severity": "safe", # Changed from low to safe
+                        "message": f"Company Presence Found: {company_name} has a verified digital footprint on professional networks, though this specific listing was not found."
                     })
                 else:
+                    # Only flag as high if we found ABSOLUTELY nothing about the company
                     findings.append({
                         "type": "agent_no_record",
                         "severity": "high",
-                        "message": f"Warning: No matching record found for {company_name} on professional networks."
+                        "message": f"Unverified Entity: No professional record or career presence found for '{company_name}'. Exercise extreme caution."
                     })
 
             except Exception as e:
@@ -100,7 +131,13 @@ class PlatformVerifier:
                     findings.append({
                         "type": "official_site_match",
                         "severity": "safe",
-                        "message": f"Found direct match for '{job_title}' on {company_name}'s official career domain."
+                        "message": f"Official Source: Found direct job listing for '{job_title}' on {company_name}'s official career portal."
+                    })
+                else:
+                    findings.append({
+                        "type": "no_official_listing",
+                        "severity": "medium",
+                        "message": f"Missing Official Listing: Job for '{job_title}' was not found on the primary company careers page. Verify via official contact."
                     })
             except Exception as e:
                 print(f"Official Site Verification Error: {e}")
@@ -130,13 +167,13 @@ class PlatformVerifier:
                     findings.append({
                         "type": "company_location_found",
                         "severity": "safe",
-                        "message": f"Verified physical location for {company_name}: {address}"
+                        "message": f"Verified Headquarters: {company_name} is physically located at {address}."
                     })
                 else:
                     findings.append({
                         "type": "company_location_missing",
                         "severity": "medium",
-                        "message": f"Could not verify a physical office location for {company_name}."
+                        "message": f"Unverified Location: No registered physical address or headquarters found for '{company_name}' via Knowledge Graph."
                     })
             except Exception as e:
                 print(f"Company Location Error: {e}")

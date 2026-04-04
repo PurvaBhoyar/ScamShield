@@ -18,6 +18,7 @@ from app.services.ocr_service import extract_text_from_image
 from app.services.ai_service import analyze_text_with_ai
 from app.services.elevenlabs_service import ElevenLabsService
 from app.services.platform_verifier import PlatformVerifier
+from app.services.url_service import extract_text_from_url
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -51,7 +52,10 @@ async def perform_parallel_scan(
     audio_path = None
     
     # --- PHASE 1: Normalization (The Front Door) ---
-    if type == "file" and file:
+    if type == "url" and url:
+        extracted_text = extract_text_from_url(url)
+        
+    elif type == "file" and file:
         temp_path = f"temp_{uuid.uuid4()}_{file.filename}"
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -116,7 +120,6 @@ async def perform_parallel_scan(
         if isinstance(res, list):
             all_findings.extend(res)
         elif isinstance(res, dict) and "findings" in res:
-            # Handle results from Member 2's AI service dictionary
             all_findings.extend(res["findings"])
 
     # --- PHASE 3: Verdict ---

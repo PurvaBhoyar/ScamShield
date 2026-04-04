@@ -16,7 +16,6 @@ from app.services.threat_intel import ThreatIntelService
 from app.services.vector_search import VectorSearchService
 from app.services.ocr_service import extract_text_from_image
 from app.services.ai_service import analyze_text_with_ai
-from app.services.elevenlabs_service import ElevenLabsService
 from app.services.platform_verifier import PlatformVerifier
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -44,7 +43,7 @@ async def shutdown_db_client():
 
 @app.post("/api/scan", response_model=ScanResponse)
 async def perform_parallel_scan(
-    type: str = Form(..., pattern="^(url|text|file|audio)$"),
+    type: str = Form(..., pattern="^(url|text|file)$"),
     url: Optional[str] = Form(None),
     text: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
@@ -52,7 +51,6 @@ async def perform_parallel_scan(
 ):
     all_findings = []
     extracted_text = text or ""
-    audio_path = None
     
     # --- PHASE 1: Normalization (The Front Door) ---
     if type == "url" and url:
@@ -68,13 +66,10 @@ async def perform_parallel_scan(
             # Check if it's an image or PDF for OCR
             if file.content_type.startswith("image") or file.filename.endswith(".pdf"):
                 extracted_text = extract_text_from_image(temp_path)
-            # Check if it's an audio file for ElevenLabs
-            elif file.content_type.startswith("audio") or file.filename.endswith((".mp3", ".wav")):
-                audio_path = temp_path
         except Exception as e:
             print(f"Extraction Error: {e}")
         finally:
-            if not audio_path and os.path.exists(temp_path): os.remove(temp_path)
+            if os.path.exists(temp_path): os.remove(temp_path)
             
     # --- PHASE 2: Parallel Signal Engine (Agentic Orchestration) ---
     tasks = []
@@ -130,26 +125,22 @@ async def perform_parallel_scan(
     if extracted_text:
         # Rule-based text analysis (Blacklist words, patterns)
         tasks.append(asyncio.to_thread(RuleEngine.analyze_text, extracted_text))
-        
+
         # Threat Intel: DB Lookup for UPI/Phone IDs
         ids = ThreatIntelService.extract_identifiers(extracted_text)
         tasks.append(ThreatIntelService.check_blacklist(db, ids))
-        
+
         # Vector Search: Template match in MongoDB
         tasks.append(VectorSearchService.find_similar_scams(db, extracted_text))
-        
+
         # Agentic Research Flow (Starts after AI identifies company)
         tasks.append(run_ai_and_verify(extracted_text, fallback_company))
 
-    # 2. Voice Intelligence Task
-    if audio_path:
-        tasks.append(ElevenLabsService.analyze_audio_conversation(audio_path))
+        # Extract phone numbers from text/URL content
+        phone_numbers = RuleEngine.extract_phone_numbers(extracted_text)
 
     # --- EXECUTE ALL AGENTS IN PARALLEL ---
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Cleanup audio file after processing
-    if audio_path and os.path.exists(audio_path): os.remove(audio_path)
 
     metadata = {"company": "Unknown", "title": "Unknown", "location": "Not Found"}
     domain_info = None
@@ -188,7 +179,8 @@ async def perform_parallel_scan(
         createdAt=datetime.utcnow(),
         domain=scanned_domain,
         domain_info=domain_info,
-        domain_reasons=domain_reasons
+        domain_reasons=domain_reasons,
+        phone_numbers=phone_numbers if 'phone_numbers' in locals() else None
     )
     
     # Persistence

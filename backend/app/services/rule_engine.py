@@ -73,3 +73,28 @@ class RuleEngine:
         for tld in RuleEngine.SUSPICIOUS_TLDS:
             if domain.endswith(tld): findings.append({"type": "suspicious_domain", "severity": "high", "message": f"High-risk TLD: '{tld}'"})
         return findings
+
+    @staticmethod
+    def extract_phone_numbers(text: str) -> List[str]:
+        """Extract phone numbers from text content."""
+        phone_numbers = []
+        # Pattern to match various phone number formats
+        patterns = [
+            r'\+?91[\s\-]?\d{10}',  # Indian: +91 8591830938
+            r'\+?1[\s\-]?\d{10}',   # US: +1 1234567890
+            r'\+?\d{1,3}[\s\-]?\d{4,12}',  # International
+            r'\b\d{10}\b',  # Plain 10 digits
+            r'\b\d{3}[\s\-]?\d{3}[\s\-]?\d{4}\b',  # XXX-XXX-XXXX
+            r'\(\d{3}\)\s*\d{3}[\s\-]?\d{4}',  # (XXX) XXX-XXXX
+        ]
+
+        for pattern in patterns:
+            matches = re.findall(pattern, text)
+            for match in matches:
+                # Clean up the number
+                cleaned = re.sub(r'[^\d+]', '', match)
+                if len(cleaned) >= 10:  # Valid phone numbers have at least 10 digits
+                    phone_numbers.append(cleaned)
+
+        # Remove duplicates
+        return list(set(phone_numbers))

@@ -34,6 +34,8 @@ class ScanResponse(BaseModel):
     domain: Optional[str] = None
     domain_info: Optional[dict] = None
     domain_reasons: Optional[List[dict]] = None
+    # Phone numbers found in content
+    phone_numbers: Optional[List[str]] = None
 
 class ScanHistory(BaseModel):
     id: str

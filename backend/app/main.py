@@ -23,6 +23,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 # Add missing service for URL content extraction
 from app.services.url_service import extract_text_from_url
 from app.services.domain_service import analyze_domain
+from app.services.verification_service import run_verification
 
 app = FastAPI(title=settings.PROJECT_NAME)
 
@@ -175,6 +176,15 @@ async def perform_parallel_scan(
     score_result = ScoringService.calculate_score(all_findings)
     recommendations = ScoringService.generate_recommendations(score_result["label"], all_findings)
 
+    # --- PHASE 4: Company/Location/Contact Verification ---
+    verification = await run_verification(
+        text=extracted_text,
+        url=url,
+        company_name=metadata["company"],
+        job_title=metadata["title"],
+        location=metadata["location"]
+    )
+
     response = ScanResponse(
         id=str(uuid.uuid4()),
         company_name=metadata["company"],
@@ -188,7 +198,8 @@ async def perform_parallel_scan(
         createdAt=datetime.utcnow(),
         domain=scanned_domain,
         domain_info=domain_info,
-        domain_reasons=domain_reasons
+        domain_reasons=domain_reasons,
+        verification=verification
     )
     
     # Persistence

@@ -34,6 +34,8 @@ class ScanResponse(BaseModel):
     domain: Optional[str] = None
     domain_info: Optional[dict] = None
     domain_reasons: Optional[List[dict]] = None
+    # Verification fields
+    verification: Optional[dict] = None
 
 class ScanHistory(BaseModel):
     id: str

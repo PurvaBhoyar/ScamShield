@@ -29,6 +29,13 @@ class RuleEngine:
             answers = dns.resolver.resolve(domain, 'MX')
             if len(answers) == 0:
                 findings.append({"type": "null_mx", "severity": "high", "message": f"Domain {domain} has no mail servers."})
+            else:
+                # MX records found - add a positive finding (clean format)
+                mx_hosts = [str(rdata).strip('.') for rdata in answers]
+                mx_list = ", ".join(mx_hosts[:3])  # Show max 3 MX servers
+                if len(mx_hosts) > 3:
+                    mx_list += f" (+{len(mx_hosts) - 3} more)"
+                findings.append({"type": "mx_records_found", "severity": "safe", "message": f"Domain {domain} can receive emails (MX: {mx_list})"})
         except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
             findings.append({"type": "no_mx", "severity": "critical", "message": f"Domain {domain} is not configured to receive email."})
         except Exception as e:

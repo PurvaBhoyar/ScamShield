@@ -6,14 +6,14 @@ from google.genai import types
 
 # Initialize environment and client
 load_dotenv()
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
 def analyze_text_with_ai(extracted_text: str) -> dict:
     """
     Analyzes extracted text using Gemini and returns a dictionary 
     formatted to match the ScanResponse Pydantic schema.
     """
-    model_id = 'gemini-2.5-flash'
+    model_id = 'gemini-1.5-flash'
 
     system_instruction = """
     You are an expert scam detection AI. Analyze the user's text and identify if it is a scam.
@@ -22,8 +22,10 @@ def analyze_text_with_ai(extracted_text: str) -> dict:
     
     REQUIRED JSON SCHEMA:
     {
+      "company_name": "<string: official company name extracted>",
+      "job_title": "<string: job title extracted>",
       "id": "generated_by_ai",
-      "score": <integer from 0 to 100, where 100 is maximum danger>,
+      "score": <integer from 0 to 100>,
       "label": "<string: 'Safe', 'Caution', or 'Danger'>",
       "findings": [
         {

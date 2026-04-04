@@ -5,13 +5,13 @@ from PIL import Image
 
 # Initialize environment and client
 load_dotenv()
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
 def extract_text_from_image(image_path: str) -> str:
     """
     Extracts raw text from an uploaded image file using Gemini's multimodal capabilities.
     """
-    model_id = 'gemini-2.5-flash'
+    model_id = 'gemini-1.5-flash'
     
     try:
         # Load the image using Pillow (PIL)

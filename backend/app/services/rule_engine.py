@@ -6,10 +6,21 @@ from typing import List, Dict
 import tldextract
 
 class RuleEngine:
-    SUSPICIOUS_TLDS = [".tk", ".top", ".xyz", ".click", ".win", ".bid", ".club", ".link"]
-    PAYMENT_KEYWORDS = ["registration fee", "security deposit", "processing fee", "onboarding fee", "training fee", "laptop security", "refundable deposit", "pay to join"]
-    URGENCY_KEYWORDS = ["apply immediately", "limited slots", "today only", "urgent hiring", "expires in", "last chance"]
-    PII_KEYWORDS = ["aadhaar", "pan card", "bank account", "passport copy", "otp", "cvv", "atm pin"]
+    SUSPICIOUS_TLDS = [".tk", ".top", ".xyz", ".click", ".win", ".bid", ".club", ".link", ".site", ".website", ".pro", ".best"]
+    PAYMENT_KEYWORDS = [
+        "registration fee", "security deposit", "processing fee", "onboarding fee", 
+        "training fee", "laptop security", "refundable deposit", "pay to join",
+        "membership fee", "document fee", "courier fee", "verification fee", "buy a laptop"
+    ]
+    URGENCY_KEYWORDS = [
+        "apply immediately", "limited slots", "today only", "urgent hiring", 
+        "expires in", "last chance", "act fast", "quick reply required",
+        "hiring only for next 2 hours"
+    ]
+    PII_KEYWORDS = [
+        "aadhaar", "pan card", "bank account", "passport copy", "otp", "cvv", 
+        "atm pin", "netbanking password", "security question answer"
+    ]
 
     @staticmethod
     def check_mx_records(domain: str) -> List[Dict]:

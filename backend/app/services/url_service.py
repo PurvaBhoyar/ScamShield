@@ -1,33 +1,35 @@
-import requests
+import httpx
 from bs4 import BeautifulSoup
 
-def extract_text_from_url(target_url: str) -> str:
+async def extract_text_from_url(target_url: str) -> str:
     """
     Fetches the HTML content of a URL and extracts visible plain text.
+    Uses httpx for asynchronous performance.
     """
     try:
         print(f"Scraping URL: {target_url}...")
         
-        # Add a realistic User-Agent so websites don't block our scraper
+        # Realistic User-Agent to avoid scraping blocks
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         
-        # Fetch the webpage with a 10-second timeout
-        response = requests.get(target_url, headers=headers, timeout=10)
-        response.raise_for_status()  # Check for HTTP errors
+        # Use an async client with a 10-second timeout
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            response = await client.get(target_url, headers=headers)
+            response.raise_for_status()  
         
         # Parse the HTML
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Remove script and style elements
+        # Strip boilerplate: scripts, styles, headers, and nav
         for script_or_style in soup(["script", "style", "header", "footer", "nav"]):
             script_or_style.decompose()
             
-        # Extract and clean the text
+        # Extract and clean text
         text = soup.get_text(separator=' ')
         
-        # Clean up whitespace
+        # Whitespace cleanup
         lines = (line.strip() for line in text.splitlines())
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         clean_text = '\n'.join(chunk for chunk in chunks if chunk)

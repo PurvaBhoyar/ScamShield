@@ -20,6 +20,9 @@ class ScanRequest(BaseModel):
 
 class ScanResponse(BaseModel):
     id: str
+    company_name: Optional[str] = "Unknown"
+    job_title: Optional[str] = "Unknown"
+    location: Optional[str] = "Not Found"
     score: int
     label: str
     findings: List[Finding]

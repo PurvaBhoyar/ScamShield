@@ -55,6 +55,9 @@ async def perform_parallel_scan(
     db: AsyncIOMotorDatabase = Depends(get_database)
 ):
     # --- PHASE 0: Caching Check ---
+    print(f"\n🚀 New scan request: type={type}, url={url}, text_len={len(text) if text else 0}, file={file.filename if file else None}")
+    if db is None:
+        print("⚠️ MongoDB not connected - running in demo mode (no caching, no DB lookups)")
     file_content = None
     if file:
         file_content = await file.read()
@@ -62,16 +65,13 @@ async def perform_parallel_scan(
     
     request_hash = generate_request_hash(type, url, text, file_content)
     
-    if db is not None and not refresh:
-        cached_result = await db.scans.find_one({"request_hash": request_hash})
-        if cached_result:
-            # Cache any valid result (has label) - even Safe results
-            if cached_result.get("label"):
-                print(f"Cache Hit for {type}: {request_hash}")
-                cached_result.pop("_id", None)
-                return ScanResponse(**cached_result)
-            else:
-                print(f"Invalid cache for {request_hash}, re-scanning...")
+    # TEMPORARILY DISABLE CACHE TO DEBUG
+    # if db is not None and not refresh:
+    #     cached_result = await db.scans.find_one({"request_hash": request_hash})
+    #     if cached_result and cached_result.get("label") and cached_result.get("score", 0) > 0:
+    #         print(f"💾 Cache Hit for {type}: {request_hash}")
+    #         cached_result.pop("_id", None)
+    #         return ScanResponse(**cached_result)
 
     all_findings = []
     extracted_text = text or ""
@@ -100,6 +100,7 @@ async def perform_parallel_scan(
             if not audio_path and os.path.exists(temp_path): os.remove(temp_path)
             
     # --- PHASE 2: Parallel Signal Engine (Agentic Orchestration) ---
+    print(f"🔍 Input type: {type}, extracted_text length: {len(extracted_text)}")
     tasks = []
     
     # Extract domain from URL for fallback company identification
@@ -111,36 +112,52 @@ async def perform_parallel_scan(
             fallback_company = parsed.netloc.replace("www.", "").split(".")[0].capitalize()
 
     # Define a helper to run AI and then all Verifiers in parallel (Sequential Dependence within Parallelism)
-    async def run_ai_and_verify(text: str, domain_fallback: str = None):
+    async def run_ai_and_verify(text: str, url: str, domain_fallback: str = None):
         findings = []
-        metadata = {"company": "Unknown", "title": "Unknown", "location": "Not Found"}
-        
-        # 🧠 Brain Agent: Extract entities using Groq/Gemini
+        metadata = {"company": domain_fallback or "Unknown Company", "title": "Unknown Title", "location": "Remote"}
+
+        print(f"🤖 Running AI analysis on text: {text[:100]}...")
+
+        # 🧠 Brain Agent: Extract entities using Groq
         ai_res = await asyncio.to_thread(analyze_text_with_ai, text)
+
+        # print(f"🤖 AI result: {ai_res}")
+
         if isinstance(ai_res, dict):
             # Include soft findings from AI analysis (Urgency, Tone, etc.)
             findings.extend(ai_res.get("findings", []))
-            
-            company = ai_res.get("company_name", "Unknown Company")
-            if company == "Unknown" or company == "Unknown Company":
-                company = domain_fallback or "Unknown Company"
-            
-            metadata["company"] = company
-            metadata["title"] = ai_res.get("job_title", "Unknown Title")
-            
-            # 🕵️ Professional 8-Layer Verification (Evidence-First)
-            # This replaces the old expert_results logic with the new standard
-            layer_res = await EightLayerVerifier.verify_all(
-                text, url, company, metadata["title"], metadata["location"]
-            )
-            
-            if "findings" in layer_res:
-                findings.extend(layer_res["findings"])
-            if "metadata" in layer_res:
-                # Update location if found in layers
-                if layer_res["metadata"].get("location") and layer_res["metadata"]["location"] != "Not Found":
-                    metadata["location"] = layer_res["metadata"]["location"]
-        
+
+            # Use extracted metadata if valid, otherwise keep fallback
+            extracted_company = ai_res.get("company_name")
+            if extracted_company and extracted_company not in ["Unknown", "Unknown Company", "None"]:
+                metadata["company"] = extracted_company
+
+            extracted_title = ai_res.get("job_title")
+            if extracted_title and extracted_title not in ["Unknown", "Unknown Title", "None"]:
+                metadata["title"] = extracted_title
+
+            extracted_loc = ai_res.get("location")
+            if extracted_loc and extracted_loc not in ["Unknown", "Not Found", "None"]:
+                metadata["location"] = extracted_loc
+
+        # 🕵️ Professional 8-Layer Verification (only if URL provided)
+        if url:
+            try:
+                layer_res = await EightLayerVerifier.verify_all(
+                    text, url, metadata["company"], metadata["title"], metadata["location"]
+                )
+
+                if isinstance(layer_res, dict):
+                    if "findings" in layer_res:
+                        findings.extend(layer_res["findings"])
+                    if "metadata" in layer_res:
+                        m = layer_res["metadata"]
+                        if m.get("location") and m["location"] != "Not Found":
+                            metadata["location"] = m["location"]
+            except Exception as e:
+                print(f"⚠️ Verification layers error: {type(e).__name__}: {str(e)[:100]}")
+
+        print(f"🤖 Total findings from AI+Verification: {len(findings)}")
         return {"findings": findings, "metadata": metadata}
 
     # 1. Forensic & Text Logic Tasks
@@ -150,18 +167,23 @@ async def perform_parallel_scan(
         tasks.append(asyncio.to_thread(analyze_domain, url))
     
     if extracted_text:
+        print(f"📝 Processing text: {extracted_text[:200]}...")
         # Rule-based text analysis (Blacklist words, patterns)
         tasks.append(asyncio.to_thread(RuleEngine.analyze_text, extracted_text))
         
         # Threat Intel: DB Lookup for UPI/Phone IDs
-        ids = ThreatIntelService.extract_identifiers(extracted_text)
-        tasks.append(ThreatIntelService.check_blacklist(db, ids))
-        
-        # Vector Search: Template match in MongoDB
-        tasks.append(VectorSearchService.find_similar_scams(db, extracted_text))
+        # Threat Intel: DB Lookup for UPI/Phone IDs (only if DB connected)
+        if db is not None:
+            ids = ThreatIntelService.extract_identifiers(extracted_text)
+            tasks.append(ThreatIntelService.check_blacklist(db, ids))
 
-        # Agentic Research Flow (Starts after AI identifies company)
-        tasks.append(run_ai_and_verify(extracted_text, fallback_company))
+            # Vector Search: Template match in MongoDB
+            tasks.append(VectorSearchService.find_similar_scams(db, extracted_text))
+        else:
+            print("⚠️ Skipping DB lookups (ThreatIntel + VectorSearch) - DB not connected")
+
+        # Agentic Research Flow - just add directly
+        tasks.append(run_ai_and_verify(extracted_text, url, fallback_company))
 
     # 2. Voice Intelligence Task
     if audio_path:
@@ -169,7 +191,7 @@ async def perform_parallel_scan(
 
     # --- EXECUTE ALL AGENTS IN PARALLEL ---
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     # Cleanup audio file after processing
     if audio_path and os.path.exists(audio_path): os.remove(audio_path)
 
@@ -178,12 +200,18 @@ async def perform_parallel_scan(
     domain_reasons = []
     scanned_domain = None
 
-    for res in results:
-        if isinstance(res, list):
+    print(f"📊 Total tasks executed: {len(results)}")
+    for i, res in enumerate(results):
+        if isinstance(res, Exception):
+            print(f"❌ Task {i} error: {str(res)[:100]}")
+        elif isinstance(res, list):
+            print(f"📋 Task {i} returned {len(res)} list items")
             all_findings.extend(res)
         elif isinstance(res, dict):
+            print(f"📋 Task {i} returned dict with keys: {list(res.keys())}")
             # General findings and metadata
             if "findings" in res:
+                print(f"   → findings count: {len(res['findings'])}")
                 all_findings.extend(res["findings"])
             if "metadata" in res:
                 metadata.update(res["metadata"])
@@ -198,8 +226,13 @@ async def perform_parallel_scan(
                 elif "findings" in res and res.get("domain"):
                      domain_reasons = res["findings"]
 
+    print(f"🔍 Total findings collected: {len(all_findings)}")
+    for f in all_findings:
+        print(f"   - {f.get('type', 'unknown')}: {f.get('message', '')[:50]}")
+
     # --- PHASE 3: Multi-Factor Verdict ---
     score_result = ScoringService.calculate_score(all_findings)
+    print(f"🎯 SCORE RESULT: {score_result}")
     final_findings = score_result.get("findings", all_findings)
     recommendations = ScoringService.generate_recommendations(score_result["label"], final_findings)
 

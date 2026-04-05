@@ -142,6 +142,16 @@ class ScoringService:
         """
         Calculate score with UI point injection and probabilistic damping.
         """
+        print(f"🎯 calculate_score called with {len(findings)} findings")
+
+        if not findings:
+            return {
+                "score": 0,
+                "label": "Safe",
+                "findings": [],
+                "breakdown": {"deterministic": 0, "probabilistic": 0, "trust_bonus": 0, "net_score": 0}
+            }
+
         deterministic_score = 0
         probabilistic_score = 0
         trust_bonus = 0
@@ -159,7 +169,7 @@ class ScoringService:
             seen_types.add(f_type)
 
             weight_type = cls.WEIGHT_TYPES.get(f_type, "probabilistic")
-            base_weight = cls.FINDING_WEIGHTS.get(f_type, 10)
+            base_weight = cls.FINDING_WEIGHTS.get(f_type, 15)  # Default 15 points for unknown types
 
             if base_weight >= 0:
                 severity_mult = cls.SEVERITY_ADJUSTMENTS.get(severity, 0.5)

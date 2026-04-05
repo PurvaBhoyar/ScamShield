@@ -8,18 +8,22 @@ import tldextract
 class RuleEngine:
     SUSPICIOUS_TLDS = [".tk", ".top", ".xyz", ".click", ".win", ".bid", ".club", ".link", ".site", ".website", ".pro", ".best"]
     PAYMENT_KEYWORDS = [
-        "registration fee", "security deposit", "processing fee", "onboarding fee", 
+        "registration fee", "security deposit", "processing fee", "onboarding fee",
         "training fee", "laptop security", "refundable deposit", "pay to join",
-        "membership fee", "document fee", "courier fee", "verification fee", "buy a laptop"
+        "membership fee", "document fee", "courier fee", "verification fee", "buy a laptop",
+        "pay", "rupees", "rs", "amount", "fee", "deposit", "money", "payment", "upi",
+        "google pay", "phonepe", "paytm", "credit card", "debit card"
     ]
     URGENCY_KEYWORDS = [
-        "apply immediately", "limited slots", "today only", "urgent hiring", 
+        "apply immediately", "limited slots", "today only", "urgent hiring",
         "expires in", "last chance", "act fast", "quick reply required",
-        "hiring only for next 2 hours"
+        "hiring only for next 2 hours", "apply soon", "hurry", "limited time",
+        "quick", "fast", "immediately", " ASAP ", "last opportunity"
     ]
     PII_KEYWORDS = [
-        "aadhaar", "pan card", "bank account", "passport copy", "otp", "cvv", 
-        "atm pin", "netbanking password", "security question answer"
+        "aadhaar", "adhaar", "pan card", "bank account", "passport copy", "otp", "cvv",
+        "atm pin", "netbanking password", "security question answer", "share details",
+        "date of birth", "dob", "address", "photo id", "resume", "original documents"
     ]
 
     @staticmethod

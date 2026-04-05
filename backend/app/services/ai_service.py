@@ -1,34 +1,40 @@
 import os
 import json
-import re
 from pathlib import Path
-from google import genai
+from typing import Dict, Any
 from groq import Groq
 from dotenv import load_dotenv
 
-# Load .env from backend directory
-env_path = Path(__file__).parent.parent.parent / ".env"
+# --- 0. Precise Path Resolution ---
+# Ensures the .env is found regardless of execution directory
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+env_path = BASE_DIR / ".env"
 load_dotenv(env_path)
 
-# 1. Initialize Gemini Client
-_google_raw = os.getenv("GOOGLE_API_KEY", "").strip()
-GOOGLE_API_KEY = "".join(char for char in _google_raw if 32 <= ord(char) <= 126).strip()
-gemini_client = genai.Client(api_key=GOOGLE_API_KEY) if GOOGLE_API_KEY else None
+# --- 1. Client Initialization with Sanitization ---
+def _get_clean_key(key_name: str) -> str:
+    """Strips hidden newline characters or whitespace from env variables."""
+    raw_key = os.getenv(key_name, "").strip()
+    if not raw_key:
+        return ""
+    # Filter out non-ASCII/control characters that break API calls
+    return "".join(char for char in raw_key if 32 <= ord(char) <= 126).strip()
 
-# 2. Initialize Groq Client (Fallback)
-_groq_raw = os.getenv("GROQ_API_KEY", "").strip()
-GROQ_API_KEY = "".join(char for char in _groq_raw if 32 <= ord(char) <= 126).strip()
+GROQ_API_KEY = _get_clean_key("GROQ_API_KEY")
+
+# Initialize Groq Client exclusively
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-def _local_fallback_analysis(text: str) -> dict:
-    """Hard-coded keyword analysis if all APIs fail."""
+# --- 2. Local Failsafe Engine ---
+def _local_fallback_analysis(text: str) -> Dict[str, Any]:
+    """Hard-coded keyword analysis if Groq API or network fails."""
     findings = []
     text_lower = text.lower()
     
-    # Red Flag Keywords
+    # Priority patterns based on defined ScamShield risk indicators
     patterns = {
-        "payment_request": ["registration fee", "security deposit", "processing fee", "deposit", "pay to join"],
-        "urgency": ["apply immediately", "limited slots", "urgent hiring", "act fast"],
+        "payment_request": ["registration fee", "security deposit", "processing fee", "onboarding fee", "pay to join"],
+        "urgency": ["apply immediately", "limited slots", "urgent hiring", "act fast", "today only"],
         "pii_request": ["aadhaar", "pan card", "bank account", "passport", "otp", "cvv"]
     }
     
@@ -38,7 +44,7 @@ def _local_fallback_analysis(text: str) -> dict:
                 findings.append({
                     "type": f_type,
                     "severity": "critical" if f_type != "urgency" else "high",
-                    "message": f"Detected {f_type.replace('_', ' ')}: '{kw}'"
+                    "message": f"[Failsafe Mode] Detected {f_type.replace('_', ' ')} keywords: '{kw}'"
                 })
                 break
 
@@ -50,18 +56,17 @@ def _local_fallback_analysis(text: str) -> dict:
         "findings": findings
     }
 
-def analyze_text_with_ai(extracted_text: str) -> dict:
-    """Primary: Gemini 2.0 -> Secondary: Groq Llama 3.1 -> Tertiary: Local."""
+# --- 3. Primary Analysis Engine ---
+def analyze_text_with_ai(extracted_text: str) -> Dict[str, Any]:
+    """
+    Groq-Exclusive Analysis Architecture:
+    Primary: Groq (Llama 3.1) -> Secondary: Local Keyword Engine.
+    """
     
     SYSTEM_PROMPT = """You are an elite cyber-forensics investigator specializing in recruitment fraud.
-Analyze the provided job description/text and extract key entities. 
-Then, identify specific 'red flags' based on these categories:
-1. payment_request: Asking for money, deposits, or fees.
-2. pii_request: Asking for sensitive data (PAN, Aadhaar, Bank, OTP).
-3. urgency: Using high-pressure tactics or artificial deadlines.
-4. unrealistic_salary: Compensation that is far above market rates.
+Analyze the provided text and extract key entities. Then, identify specific 'red flags'.
 
-Return ONLY a JSON object:
+REQUIRED OUTPUT FORMAT (JSON ONLY):
 {
   "company_name": "Extract exact company name or 'Unknown'",
   "job_title": "Extract job title or 'Unknown'",
@@ -75,36 +80,13 @@ Return ONLY a JSON object:
   ]
 }"""
 
-    # Clean input text
-    text_to_analyze = extracted_text[:15000] # Token limit safety
-    
-    # --- STEP 1: TRY GEMINI (New SDK) ---
-    if gemini_client:
-        for model_id in ["gemini-2.0-flash", "gemini-1.5-flash"]:
-            try:
-                response = gemini_client.models.generate_content(
-                    model=model_id,
-                    contents=[SYSTEM_PROMPT, text_to_analyze],
-                    config={"response_mime_type": "application/json"}
-                )
-                if response and response.text:
-                    raw_text = response.text
-                    if "```json" in raw_text:
-                        raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-                    elif "```" in raw_text:
-                        raw_text = raw_text.split("```")[1].split("```")[0].strip()
-                    
-                    result = json.loads(raw_text)
-                    result["id"] = f"gemini_{model_id}"
-                    return result
-            except Exception as e:
-                print(f"⚠️ Gemini {model_id} Error: {str(e)[:100]}")
-                continue
+    # Safety: Token limit handling for large documents
+    text_to_analyze = extracted_text[:15000]
 
-    # --- STEP 2: TRY GROQ FALLBACK ---
+    # --- STEP 1: GROQ PRIMARY ---
     if groq_client:
         try:
-            print("🔄 Falling back to Groq (Llama 3.1)...")
+            print("🔄 Using Groq (Llama 3.1) as the exclusive AI engine...")
             response = groq_client.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=[
@@ -115,11 +97,12 @@ Return ONLY a JSON object:
                 response_format={"type": "json_object"}
             )
             result = json.loads(response.choices[0].message.content)
-            result["id"] = "groq_fallback"
+            result["id"] = "groq_primary"
+            print(f"✅ Groq analysis complete: {len(result.get('findings', []))} findings")
             return result
         except Exception as e:
-            print(f"⚠️ Groq Error: {str(e)[:100]}")
+            print(f"⚠️ Groq Critical Error: {str(e)[:200]}")
 
-    # --- STEP 3: LOCAL FAILSAFE ---
-    print("🚨 All AI APIs failed. Using local keyword engine.")
+    # --- STEP 2: LOCAL FAILSAFE ---
+    print("🚨 Groq API failed or key missing. Using local keyword engine.")
     return _local_fallback_analysis(extracted_text)

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ScamShield</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <span class="shield-icon">🛡️</span>
+        <h1>ScamShield</h1>
+      </div>
+    </header>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="url">URL Scan</button>
+      <button class="tab" data-tab="text">Text Scan</button>
+    </div>
+
+    <!-- URL Scan Tab -->
+    <div class="tab-content active" id="url-tab">
+      <div class="input-group">
+        <label>Current Page URL</label>
+        <input type="text" id="url-input" placeholder="https://..." readonly>
+      </div>
+      <button class="btn primary" id="scan-url-btn">Scan URL</button>
+    </div>
+
+    <!-- Text Scan Tab -->
+    <div class="tab-content" id="text-tab">
+      <div class="input-group">
+        <label>Paste Job Description</label>
+        <textarea id="text-input" placeholder="Paste job posting text here..."></textarea>
+      </div>
+      <button class="btn primary" id="scan-text-btn">Scan Text</button>
+    </div>
+
+    <!-- Results Section -->
+    <div class="results" id="results" style="display: none;">
+      <div class="score-section">
+        <div class="score-circle" id="score-circle">
+          <span class="score" id="score-value">0</span>
+          <span class="label" id="score-label">Safe</span>
+        </div>
+      </div>
+
+      <div class="result-details">
+        <div class="detail-row">
+          <span class="label">Company:</span>
+          <span class="value" id="company-name">-</span>
+        </div>
+        <div class="detail-row">
+          <span class="label">Job:</span>
+          <span class="value" id="job-title">-</span>
+        </div>
+      </div>
+
+      <div class="findings-section">
+        <h3>Findings</h3>
+        <ul id="findings-list"></ul>
+      </div>
+
+      <div class="actions-section">
+        <h3>Recommended Actions</h3>
+        <ul id="actions-list"></ul>
+      </div>
+    </div>
+
+    <!-- Loading State -->
+    <div class="loading" id="loading" style="display: none;">
+      <div class="spinner"></div>
+      <p>Analyzing...</p>
+    </div>
+
+    <!-- Error State -->
+    <div class="error" id="error" style="display: none;">
+      <p id="error-message">Something went wrong</p>
+      <button class="btn secondary" id="retry-btn">Try Again</button>
+    </div>
+
+    <footer>
+      <p>Powered by ScamShield API</p>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

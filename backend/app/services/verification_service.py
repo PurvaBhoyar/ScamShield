@@ -6,6 +6,7 @@ import re
 import httpx
 import dns.resolver
 import tldextract
+from urllib.parse import quote_plus
 from typing import List, Dict, Optional
 from app.core.config import settings
 
@@ -21,6 +22,19 @@ class VerificationService:
 
     # Trusted company TLDs
     TRUSTED_TLDS = [".com", ".co.in", ".in", ".org", ".net", ".io"]
+
+    @staticmethod
+    def _get_api_key() -> str:
+        """Strips non-printable characters from SerpAPI key."""
+        key = getattr(settings, "SERPAPI_API_KEY", "")
+        if not key: return ""
+        return "".join(char for char in key if 32 <= ord(char) <= 126).strip()
+
+    @staticmethod
+    def _sanitize(text: str) -> str:
+        """Removes non-printable ASCII or illegal URL characters."""
+        if not text: return ""
+        return "".join(char for char in text if 32 <= ord(char) <= 126)
 
     @staticmethod
     def extract_emails_from_text(text: str) -> List[str]:
@@ -128,13 +142,14 @@ class VerificationService:
         result["official_website"] = f"https://{domain}"
 
         # Try to find careers and social pages
-        if not settings.SERPAPI_API_KEY:
+        api_key = VerificationService._get_api_key()
+        if not api_key:
             result["explanation"] = "SERPAPI key not configured - limited verification"
             return result
 
         async with httpx.AsyncClient() as client:
-            query = f'"{company_name}" careers page site:{domain}'
-            url = f"https://serpapi.com/search.json?q={query}&api_key={settings.SERPAPI_API_KEY}"
+            query = quote_plus(f'"{VerificationService._sanitize(company_name)}" careers page site:{domain}')
+            url = f"https://serpapi.com/search.json?q={query}&api_key={api_key}"
 
             try:
                 response = await client.get(url)
@@ -181,10 +196,12 @@ class VerificationService:
             return result
 
         # Search for company locations
-        if company_name and company_name != "Unknown Company" and settings.SERPAPI_API_KEY:
+        api_key = VerificationService._get_api_key()
+        if company_name and company_name != "Unknown Company" and api_key:
             async with httpx.AsyncClient() as client:
-                query = f'"{company_name}" headquarters location cities'
-                url = f"https://serpapi.com/search.json?q={query}&api_key={settings.SERPAPI_API_KEY}"
+                name = VerificationService._sanitize(company_name)
+                query = quote_plus(f'"{name}" headquarters location cities')
+                url = f"https://serpapi.com/search.json?q={query}&api_key={api_key}"
 
                 try:
                     response = await client.get(url)

@@ -1,84 +1,108 @@
 import os
 import json
-import google.generativeai as genai
+from pathlib import Path
+from typing import Dict, Any
+from groq import Groq
 from dotenv import load_dotenv
 
-# Initialize environment and client
-load_dotenv()
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+# --- 0. Precise Path Resolution ---
+# Ensures the .env is found regardless of execution directory
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+env_path = BASE_DIR / ".env"
+load_dotenv(env_path)
 
-def analyze_text_with_ai(extracted_text: str) -> dict:
-    """
-    Analyzes extracted text using Gemini and returns a dictionary 
-    formatted to match the ScanResponse Pydantic schema.
-    """
-    model = genai.GenerativeModel('gemini-1.5-flash')
+# --- 1. Client Initialization with Sanitization ---
+def _get_clean_key(key_name: str) -> str:
+    """Strips hidden newline characters or whitespace from env variables."""
+    raw_key = os.getenv(key_name, "").strip()
+    if not raw_key:
+        return ""
+    # Filter out non-ASCII/control characters that break API calls
+    return "".join(char for char in raw_key if 32 <= ord(char) <= 126).strip()
 
-    system_instruction = """
-    You are an expert scam investigator. Analyze the text for specific red flags:
-    1. Financial Requests: Any mention of deposit, fee, or payment for joining.
-    2. Psychological Pressure: Urgency, limited slots, or "act now" tactics.
-    3. Inconsistencies: Hinglish, poor grammar, or suspicious recruiter domains.
-    4. PII Data: Requests for Aadhar, PAN, or Bank Details early.
+GROQ_API_KEY = _get_clean_key("GROQ_API_KEY")
+
+# Initialize Groq Client exclusively
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+
+# --- 2. Local Failsafe Engine ---
+def _local_fallback_analysis(text: str) -> Dict[str, Any]:
+    """Hard-coded keyword analysis if Groq API or network fails."""
+    findings = []
+    text_lower = text.lower()
     
-    You MUST extract the 'company_name' and 'job_title' if available. 
-    If not found, set them to "Unknown".
-    
-    You MUST respond ONLY with a valid JSON object matching the exact schema below. 
-    Do not include markdown formatting.
-    
-    REQUIRED JSON SCHEMA:
-    {
-      "company_name": "<string: official company name extracted>",
-      "job_title": "<string: job title extracted>",
-      "id": "generated_by_ai",
-      "score": <integer from 0 to 100>,
-      "label": "<string: 'Safe', 'Caution', or 'Danger'>",
-      "findings": [
-        {
-          "type": "payment_request|urgency|pii_request|grammar",
-          "severity": "low|medium|high|critical",
-          "message": "<string explanation>"
-        }
-      ],
-      "evidence": ["<evidence snippet>"],
-      "actions": ["<recommendation>"]
+    # Priority patterns based on defined ScamShield risk indicators
+    patterns = {
+        "payment_request": ["registration fee", "security deposit", "processing fee", "onboarding fee", "pay to join"],
+        "urgency": ["apply immediately", "limited slots", "urgent hiring", "act fast", "today only"],
+        "pii_request": ["aadhaar", "pan card", "bank account", "passport", "otp", "cvv"]
     }
+    
+    for f_type, keywords in patterns.items():
+        for kw in keywords:
+            if kw in text_lower:
+                findings.append({
+                    "type": f_type,
+                    "severity": "critical" if f_type != "urgency" else "high",
+                    "message": f"[Failsafe Mode] Detected {f_type.replace('_', ' ')} keywords: '{kw}'"
+                })
+                break
+
+    return {
+        "company_name": "Unknown",
+        "job_title": "Unknown",
+        "location": "Remote",
+        "id": "local_fallback",
+        "findings": findings
+    }
+
+# --- 3. Primary Analysis Engine ---
+def analyze_text_with_ai(extracted_text: str) -> Dict[str, Any]:
     """
+    Groq-Exclusive Analysis Architecture:
+    Primary: Groq (Llama 3.1) -> Secondary: Local Keyword Engine.
+    """
+    
+    SYSTEM_PROMPT = """You are an elite cyber-forensics investigator specializing in recruitment fraud.
+Analyze the provided text and extract key entities. Then, identify specific 'red flags'.
 
-    try:
-        # Check if the model supports JSON response natively (v0.8.0+)
-        # If not, fallback to plain text generation and manual JSON parsing
+REQUIRED OUTPUT FORMAT (JSON ONLY):
+{
+  "company_name": "Extract exact company name or 'Unknown'",
+  "job_title": "Extract job title or 'Unknown'",
+  "location": "Extract city/state/country or 'Remote'",
+  "findings": [
+    {
+      "type": "payment_request|pii_request|urgency|unrealistic_salary",
+      "severity": "low|medium|high|critical",
+      "message": "Specific explanation of why this is a red flag"
+    }
+  ]
+}"""
+
+    # Safety: Token limit handling for large documents
+    text_to_analyze = extracted_text[:15000]
+
+    # --- STEP 1: GROQ PRIMARY ---
+    if groq_client:
         try:
-            response = model.generate_content(
-                f"{system_instruction}\n\nTEXT TO ANALYZE:\n{extracted_text}",
-                generation_config={"response_mime_type": "application/json"}
+            print("🔄 Using Groq (Llama 3.1) as the exclusive AI engine...")
+            response = groq_client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": text_to_analyze}
+                ],
+                temperature=0.1,
+                response_format={"type": "json_object"}
             )
-            raw_text = response.text
-        except (TypeError, ValueError):
-            # Fallback for older SDK versions that don't support response_mime_type
-            response = model.generate_content(
-                f"{system_instruction}\n\nTEXT TO ANALYZE:\n{extracted_text}\n\nIMPORTANT: Return ONLY the JSON object, no markdown."
-            )
-            raw_text = response.text
-            # Clean up potential markdown blocks
-            if "```json" in raw_text:
-                raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in raw_text:
-                raw_text = raw_text.split("```")[1].split("```")[0].strip()
-        
-        # Convert the JSON string response into a Python dictionary
-        return json.loads(raw_text)
+            result = json.loads(response.choices[0].message.content)
+            result["id"] = "groq_primary"
+            print(f"✅ Groq analysis complete: {len(result.get('findings', []))} findings")
+            return result
+        except Exception as e:
+            print(f"⚠️ Groq Critical Error: {str(e)[:200]}")
 
-    except Exception as e:
-        # Fallback mechanism in case of API failure
-        print(f"AI Analysis Error: {e}")
-        return {
-            "id": "error_fallback",
-            "score": 0,
-            "label": "Safe",
-            "findings": [],
-            "evidence": ["AI processing failed."],
-            "actions": ["Manual review recommended."],
-            "policyLog": [{"action": "ai_analysis", "status": "failed", "reason": str(e)}]
-        }
+    # --- STEP 2: LOCAL FAILSAFE ---
+    print("🚨 Groq API failed or key missing. Using local keyword engine.")
+    return _local_fallback_analysis(extracted_text)

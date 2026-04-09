@@ -18,233 +18,144 @@ import math
 
 class ScoringService:
     """
-    Multi-factor scoring system with justified weights.
-
-    Deterministic Checks (Weight 40-50): Technical proofs that cannot be faked
-    - Domain has no MX records = Critical (45 points)
-    - Domain is not registered = Critical (50 points)
-    - Domain < 30 days old = High (35 points)
-    - Blacklist match = Critical (45 points)
-    - Payment requested = Critical (50 points)
-    - PII requested = High (40 points)
-
-    Probabilistic Checks (Weight 10-25): Behavioral signals
-    - Urgency tactics = Medium (15 points)
-    - Free email domain = Medium (20 points)
-    - Suspicious TLD = Medium (15 points)
-    - AI-generated text = Low (10 points)
-    - Vague description = Low (10 points)
-
-    Trust Multipliers (Negative -30 to -50): Social proof
-    - LinkedIn company verified = -40
-    - Official careers page match = -45
-    - Company has established domain (>1 year) = -30
-    - Valid MX records = -25
+    Advanced Scoring Service with Correlation Damping and Compounding Risk.
     """
 
     # Category to weight type mapping
     WEIGHT_TYPES = {
-        # Deterministic (technical proofs)
-        "no_mx": "deterministic",
-        "null_mx": "deterministic",
-        "domain_not_registered": "deterministic",
-        "domain_very_new": "deterministic",
-        "new_domain": "deterministic",  # RuleEngine returns this
-        "blacklist_match": "deterministic",
-        "payment_request": "deterministic",
-        "pii_request": "deterministic",
-        "free_email_recruiter": "deterministic",
+        # Deterministic (Technical proofs)
+        "no_mx": "deterministic", "null_mx": "deterministic",
+        "domain_not_registered": "deterministic", "domain_very_new": "deterministic",
+        "new_domain": "deterministic", "blacklist_match": "deterministic",
+        "payment_request": "deterministic", "pii_request": "deterministic",
+        "external_threat_match": "deterministic", "ssl_expired": "deterministic",
+        "ssl_invalid": "deterministic", "ssl_hostname_mismatch": "deterministic",
+        "email_typosquatting": "deterministic", "blacklisted_upi": "deterministic",
+        "blacklisted_phone": "deterministic", "blacklisted_telegram": "deterministic",
 
-        # Probabilistic (behavioral signals)
-        "agent_no_record": "probabilistic",
-        "no_record": "probabilistic",
-        "domain_young": "probabilistic",
-        "young_domain": "probabilistic",
-        "urgency_tactic": "probabilistic",
-        "urgency": "probabilistic",  # RuleEngine returns this
-        "suspicious_tld": "probabilistic",
-        "suspicious_domain": "probabilistic",  # RuleEngine returns this
-        "unrealistic_salary": "probabilistic",
-        "no_careers_match": "probabilistic",
-        "company_unverified": "probabilistic",
-        "no_contact_email": "probabilistic",
-        "template_match": "probabilistic",
+        # Probabilistic (Behavioral signals)
+        "urgency_tactic": "probabilistic", "urgency": "probabilistic",
+        "suspicious_tld": "probabilistic", "unrealistic_salary": "probabilistic",
+        "no_careers_match": "probabilistic", "company_unverified": "probabilistic",
+        "template_match": "probabilistic", "ai_generated_pattern": "probabilistic",
+        "shortened_url": "probabilistic", "informal_contact": "probabilistic",
+        "free_email_provider": "probabilistic", "free_email_recruiter": "probabilistic",
 
-        # Trust multipliers (reduce risk)
-        "company_linkedin_verified": "trust",
-        "company_glassdoor_verified": "trust",
-        "careers_page_match": "trust",
-        "job_board_match": "trust",
-        "domain_established": "trust",
-        "mx_records_found": "trust",
-        "corporate_email_verified": "trust",
-        "agent_verified_company": "trust",  # PlatformVerifier returns this
-        "agent_verified_job": "trust",
+        # Trust multipliers (Risk Reduction)
+        "company_linkedin_verified": "trust", "company_glassdoor_verified": "trust",
+        "careers_page_match": "trust", "domain_established": "trust",
+        "mx_records_found": "trust", "corporate_email_verified": "trust",
+        "ssl_valid": "trust", "ip_resolved": "trust"
     }
 
-    # Weight points for each finding type
+    # Base points for each finding
     FINDING_WEIGHTS = {
-        # Deterministic (critical technical proofs)
-        "no_mx": 45,
-        "null_mx": 45,
-        "domain_not_registered": 50,
-        "domain_very_new": 35,
-        "new_domain": 40,  # RuleEngine returns this - critical
-        "blacklist_match": 45,
-        "payment_request": 50,
-        "pii_request": 40,
-        "free_email_recruiter": 40,
-        "unrealistic_salary": 35,
+        "external_threat_match": 85, "payment_request": 75, "email_typosquatting": 70,
+        "domain_not_registered": 65, "no_mx": 60, "blacklist_match": 60,
+        "blacklisted_upi": 65, "blacklisted_phone": 60, "blacklisted_telegram": 60,
+        "ssl_invalid": 55, "ssl_hostname_mismatch": 50, "pii_request": 50,
+        "domain_very_new": 45, "free_email_recruiter": 35, "unrealistic_salary": 40,
+        "template_match": 45, "informal_contact": 30, "shortened_url": 20,
+        "urgency": 15, "suspicious_tld": 15, "ai_generated_pattern": 10,
+        "no_careers_match": 15, "company_unverified": 15,
 
-        # Probabilistic (behavioral signals)
-        "agent_no_record": 15,
-        "no_record": 15,
-        "domain_young": 20,
-        "young_domain": 15,
-        "urgency_tactic": 15,
-        "urgency": 15,  # RuleEngine returns this
-        "suspicious_tld": 18,
-        "suspicious_domain": 20,  # RuleEngine returns this
-        "no_careers_match": 20,
-        "company_unverified": 22,
-        "no_contact_email": 12,
-        "template_match": 25,
-
-        # Trust multipliers (negative = reduce risk)
-        "company_linkedin_verified": -40,
-        "company_glassdoor_verified": -35,
-        "careers_page_match": -45,
-        "job_board_match": -30,
-        "domain_established": -30,
-        "mx_records_found": -25,
-        "corporate_email_verified": -28,
-        "agent_verified_company": -35,  # PlatformVerifier
-        "agent_verified_job": -30,
-    }
-
-    # Severity adjustments within each type
-    SEVERITY_ADJUSTMENTS = {
-        "critical": 1.0,
-        "high": 0.75,
-        "medium": 0.50,
-        "low": 0.25,
-        "safe": 0.0  # Already negative
-    }
-
-    # Thresholds (statistically derived)
-    THRESHOLDS = {
-        "safe": 20,     # 0-20: Low risk
-        "caution": 40    # 21-40: Medium risk
+        # Negative values for Trust
+        "careers_page_match": -60, "company_linkedin_verified": -50,
+        "corporate_email_verified": -45, "domain_established": -35,
+        "mx_records_found": -25, "ssl_valid": -20
     }
 
     @classmethod
     def calculate_score(cls, findings: List[Dict]) -> Dict:
         """
-        Calculate score with UI point injection and probabilistic damping.
+        Bayesian-style calculation with compounding risk.
         """
-        print(f"🎯 calculate_score called with {len(findings)} findings")
-
         if not findings:
-            return {
-                "score": 0,
-                "label": "Safe",
-                "findings": [],
-                "breakdown": {"deterministic": 0, "probabilistic": 0, "trust_bonus": 0, "net_score": 0}
-            }
+            return {"score": 0, "label": "Safe", "findings": [], "breakdown": {}}
 
-        deterministic_score = 0
-        probabilistic_score = 0
+        base_score = 0
         trust_bonus = 0
-
-        # Track unique findings
         seen_types = set()
         updated_findings = []
-
-        for finding in findings:
-            f_type = finding.get("type")
-            severity = finding.get("severity", "medium")
-
-            if f_type in seen_types:
-                continue
+        justifications = []
+        
+        # 1. Base Aggregation with Deduplication
+        for f in findings:
+            f_type = f.get("type")
+            if f_type in seen_types: continue
             seen_types.add(f_type)
 
-            weight_type = cls.WEIGHT_TYPES.get(f_type, "probabilistic")
-            base_weight = cls.FINDING_WEIGHTS.get(f_type, 15)  # Default 15 points for unknown types
-
-            if base_weight >= 0:
-                severity_mult = cls.SEVERITY_ADJUSTMENTS.get(severity, 0.5)
-                contribution = int(base_weight * severity_mult)
+            weight = cls.FINDING_WEIGHTS.get(f_type, 15)
+            
+            # Severity mapping for weight adjustment
+            severity_mult = {"critical": 1.2, "high": 1.0, "medium": 0.7, "low": 0.4, "safe": 1.0}.get(f.get("severity", "medium"), 1.0)
+            
+            if weight > 0:
+                contribution = int(weight * severity_mult)
+                base_score += contribution
             else:
-                contribution = base_weight # Trust multipliers are negative
-
-            # Inject points into the finding for UI transparency
-            finding_copy = finding.copy()
-            finding_copy["points"] = contribution
-            updated_findings.append(finding_copy)
-
-            if weight_type == "deterministic":
-                deterministic_score += contribution
-            elif weight_type == "probabilistic":
-                probabilistic_score += contribution
-            else:  # trust
+                contribution = weight # trust is negative
                 trust_bonus += abs(contribution)
+                
+            f_copy = f.copy()
+            f_copy["points"] = contribution
+            updated_findings.append(f_copy)
 
-        # --- Damping Logic for Unverified Legit Companies ---
-        # If no deterministic red flags (payment, PII, blacklist, etc.) are found,
-        # we damp the probabilistic score so it doesn't cross 'Danger' alone.
-        has_deterministic_red_flags = any(
-            cls.WEIGHT_TYPES.get(f.get("type")) == "deterministic" and f.get("points", 0) > 0
-            for f in updated_findings
-        )
-
-        if not has_deterministic_red_flags and probabilistic_score > 35:
-            # Dampen probabilistic noise if it's the only signal
-            # BUT: If probabilistic_score is very high (e.g. > 60), it's likely a scam
-            # even without deterministic proofs.
-            if probabilistic_score > 60:
-                # Less damping for very high behavioral signals
-                probabilistic_score = 45 + (probabilistic_score - 60) * 0.7
-            else:
-                probabilistic_score = 35 + (probabilistic_score - 35) * 0.4
-
-        base_score = deterministic_score + probabilistic_score
+        # 2. ⚡ COMPONENT: Risk Correlation (The "Robust" Logic)
+        risk_multipliers = 1.0
         
-        # Critical deterministic findings cannot be overridden by trust
-        has_critical = any(
-            f.get("type") in ["payment_request", "no_mx", "null_mx", "domain_not_registered", "blacklist_match"]
-            for f in updated_findings
-        )
+        # Cluster A: Domain Fraud
+        domain_red_flags = {"domain_very_new", "no_mx", "suspicious_tld", "domain_not_registered", "email_typosquatting"}
+        found_domain_flags = seen_types.intersection(domain_red_flags)
+        if len(found_domain_flags) >= 2:
+            risk_multipliers += (len(found_domain_flags) * 0.25)
+            justifications.append(f"Compounding Risk: Multiple domain-level inconsistencies found ({len(found_domain_flags)} flags)")
 
+        # Cluster B: Financial/PII Fraud
+        intent_red_flags = {"payment_request", "pii_request", "informal_contact", "blacklisted_upi"}
+        found_intent_flags = seen_types.intersection(intent_red_flags)
+        if len(found_intent_flags) >= 2:
+            risk_multipliers += (len(found_intent_flags) * 0.3)
+            justifications.append(f"Compounding Risk: Behavioral intent patterns match known recruitment scams ({len(found_intent_flags)} flags)")
+
+        # 3. Final Score Synthesis
+        raw_score = base_score * risk_multipliers
+        
+        # 4. Critical Floor
+        if "external_threat_match" in seen_types or "blacklisted_upi" in seen_types:
+            raw_score = max(raw_score, 85)
+            justifications.append("Critical Hazard: Direct match in global threat intelligence database")
+
+        # 5. Apply Trust Offset
+        critical_flags = {"external_threat_match", "blacklist_match", "blacklisted_upi", "email_typosquatting", "no_mx"}
+        has_critical = any(cf in seen_types for cf in critical_flags)
+        
         if has_critical:
-            final_score = base_score
+            final_score = raw_score
         else:
-            final_score = max(0, base_score - trust_bonus)
+            final_score = raw_score - trust_bonus
 
-        # Cap at 100
-        final_score = min(100, int(final_score))
+        final_score = max(0, min(100, int(final_score)))
         label = cls._determine_label(final_score)
 
         return {
             "score": final_score,
             "label": label,
-            "findings": updated_findings, # Return updated findings with points
+            "findings": updated_findings,
             "breakdown": {
-                "deterministic": int(deterministic_score),
-                "probabilistic": int(probabilistic_score),
-                "trust_bonus": int(trust_bonus),
-                "net_score": final_score
-            }
+                "base_risk": int(base_score),
+                "multiplier": round(risk_multipliers, 2),
+                "trust_offset": int(trust_bonus),
+                "has_critical": has_critical
+            },
+            "justification": justifications
         }
 
     @classmethod
     def _determine_label(cls, score: float) -> str:
-        """Determine label based on thresholds."""
-        if score <= cls.THRESHOLDS["safe"]:
-            return "Safe"
-        elif score <= cls.THRESHOLDS["caution"]:
-            return "Caution"
-        else:
-            return "Danger"
+        if score <= 20: return "Safe"
+        if score <= 55: return "Caution"
+        return "Danger"
 
     @staticmethod
     def generate_recommendations(label: str, findings: List[Dict]) -> List[str]:
@@ -257,21 +168,50 @@ class ScoringService:
             actions.append("Always verify job offers through official company portals.")
             if "mx_records_found" in types:
                 actions.append("Domain has valid email configuration - good sign.")
+            if "ssl_valid" in types:
+                actions.append("Website has valid SSL certificate - good sign.")
         else:
+            # Critical findings
             if "payment_request" in types:
-                actions.append("DO NOT pay any registration/processing fees.")
+                actions.append("DO NOT pay any registration/processing fees - legitimate employers NEVER ask for this.")
             if "pii_request" in types:
-                actions.append("Avoid sharing Aadhar/PAN details early on.")
+                actions.append("NEVER share Aadhaar/PAN/bank details via text/email - legitimate companies won't ask this way.")
+            if "external_threat_match" in types:
+                actions.append("WARNING: This URL is known to be malicious. Do not visit or share any information.")
+            if "email_typosquatting" in types:
+                actions.append("Email domain impersonates a real company - this is a scam.")
+
+            # High severity
             if "no_mx" in types or "null_mx" in types:
-                actions.append("The recruiter domain cannot receive emails; highly suspicious.")
-            if "free_email_recruiter" in types:
-                actions.append("Recruiter using free email - verify via official company channels.")
-            if "company_unverified" in types or "no_careers_match" in types:
-                actions.append("This job could not be verified on LinkedIn or official portals. Confirm via a phone call.")
-            if "domain_very_new" in types:
-                actions.append("Domain is very new - common for scam sites. Verify company independently.")
+                actions.append("The recruiter domain cannot receive emails - highly suspicious.")
+            if "free_email_provider" in types or "free_email_recruiter" in types:
+                actions.append("Recruiter using free email (@gmail.com, @yahoo.com) - verify via official company channels.")
             if "unrealistic_salary" in types:
-                actions.append("Salary is unrealistically high - typical scam lure.")
+                actions.append("Salary is unrealistically high - if it sounds too good to be true, it is.")
+            if "suspicious_email_pattern" in types:
+                actions.append("Email pattern looks suspicious (generic numbers in address).")
             if "template_match" in types:
-                actions.append("This job matches a known scam template. Do not proceed.")
+                actions.append("This job matches a known scam template - do not proceed.")
+            if "ssl_expired" in types or "ssl_invalid" in types:
+                actions.append("Website has invalid/expired SSL certificate - do not trust.")
+            if "dns_resolution_failed" in types:
+                actions.append("Domain cannot be resolved - may be offline or fake.")
+
+            # Medium severity
+            if "informal_contact" in types or "informal_contact_request" in types:
+                actions.append("Contact via WhatsApp/Telegram is unprofessional - legitimate employers use official email.")
+            if "urgency" in types or "urgency_tactic" in types:
+                actions.append("Urgency tactics are common in scams - take time to verify.")
+            if "suspicious_job_claim" in types:
+                claims = [f for f in findings if f.get("type") == "suspicious_job_claim"]
+                if claims:
+                    actions.append(f"Check claim: {claims[0].get('message', '')}")
+            if "company_unverified" in types or "no_cares_match" in types:
+                actions.append("Job not found on LinkedIn or company careers page - verify by calling company directly.")
+            if "domain_very_new" in types:
+                actions.append("Domain is very new (<90 days) - common for scam sites.")
+
+            # General advice
+            actions.append("When in doubt, call the company directly using their official number (not one provided in the job).")
+            actions.append("Search for the company on LinkedIn to verify they exist and are hiring.")
         return list(set(actions))

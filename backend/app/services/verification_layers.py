@@ -13,6 +13,7 @@ Implements the professional standard with evidence-first approach:
 """
 
 import re
+import asyncio
 import dns.resolver
 import httpx
 from datetime import datetime
@@ -505,7 +506,3 @@ class EightLayerVerifier:
         """Extract all email addresses from text"""
         email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
         return re.findall(email_pattern, text)
-
-
-# Helper for async gather
-import asyncio

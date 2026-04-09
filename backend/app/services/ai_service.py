@@ -31,7 +31,7 @@ def _local_fallback_analysis(text: str) -> Dict[str, Any]:
     findings = []
     text_lower = text.lower()
     
-    # Priority patterns based on defined ScamShield risk indicators
+    # Priority patterns based on defined JobShield risk indicators
     patterns = {
         "payment_request": ["registration fee", "security deposit", "processing fee", "onboarding fee", "pay to join"],
         "urgency": ["apply immediately", "limited slots", "urgent hiring", "act fast", "today only"],
@@ -63,8 +63,9 @@ def analyze_text_with_ai(extracted_text: str) -> Dict[str, Any]:
     Primary: Groq (Llama 3.1) -> Secondary: Local Keyword Engine.
     """
     
-    SYSTEM_PROMPT = """You are an elite cyber-forensics investigator specializing in recruitment fraud.
-Analyze the provided text and extract key entities. Then, identify specific 'red flags'.
+    SYSTEM_PROMPT = """You are an elite cyber-forensics investigator specializing in recruitment fraud and scam detection.
+
+Analyze the provided job offer text and extract key entities. Then, identify ALL red flags with detailed explanations.
 
 REQUIRED OUTPUT FORMAT (JSON ONLY):
 {
@@ -73,12 +74,28 @@ REQUIRED OUTPUT FORMAT (JSON ONLY):
   "location": "Extract city/state/country or 'Remote'",
   "findings": [
     {
-      "type": "payment_request|pii_request|urgency|unrealistic_salary",
+      "type": "payment_request|pii_request|urgency|unrealistic_salary|suspicious_job_claim|informal_contact|free_email_recruiter|template_match|blacklist_match|ai_generated_pattern|external_threat_match|typosquatting",
       "severity": "low|medium|high|critical",
       "message": "Specific explanation of why this is a red flag"
     }
-  ]
-}"""
+  ],
+  "confidence_score": 0-100,
+  "analysis_summary": "Brief summary of why this is likely a scam or legitimate"
+}
+
+DETECTION CATEGORIES TO CHECK:
+1. PAYMENT REQUESTS: Any mention of fees, deposits, payments (registration, processing, security, laptop, training, onboarding, membership, courier, verification, etc.) - CRITICAL
+2. PII REQUESTS: Asking for Aadhaar, PAN, bank account, passport, OTP, CVV, ATM pin, date of birth, address - HIGH
+3. URGENCY TACTICS: Words like "immediately", "limited time", "today only", "urgent", "last chance", "ASAP", "deadline" - MEDIUM
+4. UNREALISTIC SALARY: Salary claims that seem too good to be true (>30k/month for entry-level, "earn 5000/day") - HIGH
+5. SUSPICIOUS JOB CLAIMS: "No experience needed", "work from home", "part-time", "no interview", "fresher can apply" - MEDIUM
+6. INFORMAL CONTACT: Requests to contact via WhatsApp, Telegram, personal phone instead of official email - HIGH
+7. FREE EMAIL RECRUITER: Recruiter using @gmail.com, @yahoo.com, @hotmail.com instead of company domain - MEDIUM
+8. SUSPICIOUS DOMAIN: Job posted on non-company domain, typosquatting (amazn.com, amaz0n.com) - CRITICAL
+9. BLACKLIST PATTERNS: Known scam phrases or templates - CRITICAL
+10. AI-GENERATED TEXT: Detect if text appears AI-generated with generic phrases - LOW
+
+Be VERY thorough - look for ANY red flag. Better to report something than miss it."""
 
     # Safety: Token limit handling for large documents
     text_to_analyze = extracted_text[:15000]

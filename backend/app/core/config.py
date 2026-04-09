@@ -2,9 +2,9 @@ from pydantic_settings import BaseSettings
 from functools import lru_cache
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "ScamShield API"
+    PROJECT_NAME: str = "JobShield API"
     MONGODB_URL: str = "mongodb://localhost:27017"
-    DATABASE_NAME: str = "scamshield"
+    DATABASE_NAME: str = "jobshield_db"
     GOOGLE_API_KEY: str = ""
     GROQ_API_KEY: str = ""
     ELEVENLABS_API_KEY: str = ""

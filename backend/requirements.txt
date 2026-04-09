@@ -1,7 +1,6 @@
 # --- Core Infrastructure ---
 fastapi==0.110.0
 uvicorn==0.27.1
-motor==3.3.2
 pydantic==2.6.3
 python-dotenv==1.0.1
 pydantic-settings==2.2.1
@@ -24,5 +23,4 @@ PyMuPDF==1.23.26
 
 # --- Agentic & Platform Analysis ---
 langgraph==0.0.26
-elevenlabs==1.0.0
 serpapi==0.1.5

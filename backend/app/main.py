@@ -8,7 +8,6 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.db.mongodb import connect_to_mongo, close_mongo_connection, get_database
 from app.schemas.scan import ScanRequest, ScanResponse, Finding, ScoreBreakdown
 from app.services.rule_engine import RuleEngine
 from app.services.scoring import ScoringService
@@ -16,15 +15,21 @@ from app.services.threat_intel import ThreatIntelService
 from app.services.vector_search import VectorSearchService
 from app.services.ocr_service import extract_text_from_image
 from app.services.ai_service import analyze_text_with_ai
-from app.services.elevenlabs_service import ElevenLabsService
 from app.services.platform_verifier import PlatformVerifier
-from motor.motor_asyncio import AsyncIOMotorDatabase
+
+# In-memory storage for demo mode (No MongoDB needed)
+IN_MEMORY_SCANS = []
+MAX_RECENT_SCANS = 20
 
 # Add missing service for URL content extraction
-from app.services.url_service import extract_text_from_url
+
+# Add missing service for URL content extraction
+from app.services.url_service import extract_text_from_url, resolve_shortened_url
 from app.services.domain_service import analyze_domain
 from app.services.verification_service import run_verification
 from app.services.verification_layers import EightLayerVerifier
+from app.services.text_analysis_service import TextAnalysisService
+from app.services.external_intel_service import run_full_external_analysis, EmailAnalyzer
 from app.core.utils import generate_request_hash
 
 app = FastAPI(title=settings.PROJECT_NAME)
@@ -37,27 +42,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.on_event("startup")
-async def startup_db_client():
-    await connect_to_mongo()
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    await close_mongo_connection()
-
 @app.post("/api/scan", response_model=ScanResponse)
 async def perform_parallel_scan(
     type: str = Form(..., pattern="^(url|text|file|audio)$"),
     url: Optional[str] = Form(None),
     text: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
-    refresh: bool = Form(False),
-    db: AsyncIOMotorDatabase = Depends(get_database)
+    refresh: bool = Form(False)
 ):
     # --- PHASE 0: Caching Check ---
     print(f"\n🚀 New scan request: type={type}, url={url}, text_len={len(text) if text else 0}, file={file.filename if file else None}")
-    if db is None:
-        print("⚠️ MongoDB not connected - running in demo mode (no caching, no DB lookups)")
+    
     file_content = None
     if file:
         file_content = await file.read()
@@ -65,24 +60,55 @@ async def perform_parallel_scan(
     
     request_hash = generate_request_hash(type, url, text, file_content)
     
-    # TEMPORARILY DISABLE CACHE TO DEBUG
-    # if db is not None and not refresh:
-    #     cached_result = await db.scans.find_one({"request_hash": request_hash})
-    #     if cached_result and cached_result.get("label") and cached_result.get("score", 0) > 0:
-    #         print(f"💾 Cache Hit for {type}: {request_hash}")
-    #         cached_result.pop("_id", None)
-    #         return ScanResponse(**cached_result)
+    # Check in-memory cache
+    if not refresh:
+        for scan in IN_MEMORY_SCANS:
+            if scan.get("request_hash") == request_hash:
+                print(f"💾 In-memory cache hit: {request_hash}")
+                return ScanResponse(**scan)
 
     all_findings = []
     extracted_text = text or ""
     audio_path = None
-    
+
     # --- PHASE 1: Normalization (The Front Door) ---
     if type == "url" and url:
+        # Resolve shortened URLs first
+        url_resolution = await resolve_shortened_url(url)
+        if url_resolution.get("is_shortened"):
+            print(f"🔗 Resolved shortened URL: {url} → {url_resolution.get('resolved_url')}")
+            # Add finding about shortened URL
+            all_findings.append({
+                "type": "shortened_url",
+                "severity": "medium",
+                "message": f"URL was shortened and resolved to: {url_resolution.get('resolved_url')}"
+            })
+            # Use resolved URL for content extraction
+            url = url_resolution.get("resolved_url", url)
+
         # Extract content from the URL as text for secondary analysis
         url_content = await extract_text_from_url(url)
         extracted_text = f"URL Content: {url_content}\n\n{extracted_text}"
-        
+
+        # Also run text analysis on extracted content
+        text_findings = TextAnalysisService.analyze_text(extracted_text)
+        if text_findings:
+            all_findings.extend(text_findings)
+
+        # Run external threat intelligence (SSL, IP, threat feeds)
+        if url:
+            try:
+                external_findings = await run_full_external_analysis(url, extracted_text)
+                all_findings.extend(external_findings)
+            except Exception as e:
+                print(f"External intel error: {e}")
+
+    elif type == "text" and text:
+        # Run text analysis on direct text input
+        text_findings = TextAnalysisService.analyze_text(text)
+        if text_findings:
+            all_findings.extend(text_findings)
+
     elif type == "file" and file:
         temp_path = f"temp_{uuid.uuid4()}_{file.filename}"
         with open(temp_path, "wb") as buffer:
@@ -91,13 +117,15 @@ async def perform_parallel_scan(
             # Check if it's an image or PDF for OCR
             if file.content_type.startswith("image") or file.filename.endswith(".pdf"):
                 extracted_text = extract_text_from_image(temp_path)
-            # Check if it's an audio file for ElevenLabs
-            elif file.content_type.startswith("audio") or file.filename.endswith((".mp3", ".wav")):
-                audio_path = temp_path
+                # Also analyze extracted text
+                if extracted_text:
+                    text_findings = TextAnalysisService.analyze_text(extracted_text)
+                    if text_findings:
+                        all_findings.extend(text_findings)
         except Exception as e:
             print(f"Extraction Error: {e}")
         finally:
-            if not audio_path and os.path.exists(temp_path): os.remove(temp_path)
+            if os.path.exists(temp_path): os.remove(temp_path)
             
     # --- PHASE 2: Parallel Signal Engine (Agentic Orchestration) ---
     print(f"🔍 Input type: {type}, extracted_text length: {len(extracted_text)}")
@@ -171,29 +199,12 @@ async def perform_parallel_scan(
         # Rule-based text analysis (Blacklist words, patterns)
         tasks.append(asyncio.to_thread(RuleEngine.analyze_text, extracted_text))
         
-        # Threat Intel: DB Lookup for UPI/Phone IDs
-        # Threat Intel: DB Lookup for UPI/Phone IDs (only if DB connected)
-        if db is not None:
-            ids = ThreatIntelService.extract_identifiers(extracted_text)
-            tasks.append(ThreatIntelService.check_blacklist(db, ids))
-
-            # Vector Search: Template match in MongoDB
-            tasks.append(VectorSearchService.find_similar_scams(db, extracted_text))
-        else:
-            print("⚠️ Skipping DB lookups (ThreatIntel + VectorSearch) - DB not connected")
-
+        # NOTE: Skipping DB-dependent lookups (ThreatIntel + VectorSearch) in demo mode
         # Agentic Research Flow - just add directly
         tasks.append(run_ai_and_verify(extracted_text, url, fallback_company))
 
-    # 2. Voice Intelligence Task
-    if audio_path:
-        tasks.append(ElevenLabsService.analyze_audio_conversation(audio_path))
-
     # --- EXECUTE ALL AGENTS IN PARALLEL ---
     results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    # Cleanup audio file after processing
-    if audio_path and os.path.exists(audio_path): os.remove(audio_path)
 
     metadata = {"company": "Unknown", "title": "Unknown", "location": "Not Found"}
     domain_info = None
@@ -253,6 +264,7 @@ async def perform_parallel_scan(
         location=metadata["location"],
         score=score_result["score"],
         label=score_result["label"],
+        justification=score_result.get("justification", []),
         score_breakdown=ScoreBreakdown(**score_result["breakdown"]) if "breakdown" in score_result else None,
         findings=[Finding(**f) for f in final_findings if isinstance(f, dict)],
         evidence=[f["message"] for f in final_findings if isinstance(f, dict) and "message" in f],
@@ -261,25 +273,77 @@ async def perform_parallel_scan(
         domain=scanned_domain,
         domain_info=domain_info,
         domain_reasons=domain_reasons,
-        verification=verification
+        verification=verification,
+        type=type
     )
     
-    # Persistence
-    if db is not None:
-        try:
-            # UPSERT: Replace existing result for the same content if it exists
-            # This handles 'refresh=True' properly and avoids double-storing
-            await db.scans.replace_one(
-                {"request_hash": request_hash},
-                response.dict(),
-                upsert=True
-            )
-        except Exception as e:
-            print(f"DB Update Error: {e}")
-    else:
-        print("Warning: Database not connected. Result not saved.")
+    # Persistence: In-memory
+    IN_MEMORY_SCANS.insert(0, response.dict())
+    if len(IN_MEMORY_SCANS) > MAX_RECENT_SCANS:
+        IN_MEMORY_SCANS.pop()
         
     return response
 
+@app.get("/api/scans/recent")
+async def get_recent_scans(limit: int = 5):
+    """Fetch the most recent scan results from memory."""
+    formatted_scans = []
+    for scan in IN_MEMORY_SCANS[:limit]:
+        # Determine target for display
+        target = scan.get("company_name") or "Unknown"
+        if scan.get("domain"):
+            target = scan["domain"]
+        elif scan.get("job_title") and scan["job_title"] != "Unknown":
+            target = f"{scan['job_title']} at {target}"
+        
+        formatted_scans.append({
+            "id": scan.get("id"),
+            "type": scan.get("type", "url"),
+            "score": scan.get("score", 0),
+            "label": scan.get("label", "Unknown"),
+            "createdAt": scan.get("createdAt"),
+            "target": target
+        })
+    return formatted_scans
+
 @app.get("/health")
-async def health(): return {"status": "healthy"}
+async def health():
+    """Simple health check for demo mode."""
+    return {
+        "status": "healthy",
+        "mode": "demo_in_memory",
+        "version": "1.0.0"
+    }
+
+@app.get("/api/detection-coverage")
+async def get_detection_coverage():
+    """Get information about what the detection system covers."""
+    from app.services.rule_engine import RuleEngine
+    return {
+        "detection_layers": [
+            "Rule-based keyword analysis (payment, urgency, PII)",
+            "AI-powered text analysis (Groq Llama 3.1)",
+            "8-layer verification (company, domain, salary, etc.)",
+            "External threat intelligence (OpenPhish, URLhaus, abuse.ch)",
+            "SSL certificate analysis",
+            "IP intelligence and geolocation",
+            "Email address analysis",
+            "URL shortener resolution",
+            "Scam template matching (AI-driven)"
+        ],
+        "coverage": {
+            "suspicious_tlds": len(RuleEngine.SUSPICIOUS_TLDS),
+            "payment_keywords": len(RuleEngine.PAYMENT_KEYWORDS),
+            "urgency_keywords": len(RuleEngine.URGENCY_KEYWORDS),
+            "pii_keywords": len(RuleEngine.PII_KEYWORDS)
+        },
+        "features": {
+            "url_scanning": True,
+            "text_scanning": True,
+            "file_ocr": True,
+            "audio_analysis": False,
+            "external_threat_feeds": True,
+            "ssl_analysis": True,
+            "ip_analysis": True
+        }
+    }

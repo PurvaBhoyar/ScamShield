@@ -25,10 +25,10 @@ class ScanRequest(BaseModel):
 
 class ScoreBreakdown(BaseModel):
     """Detailed breakdown of the scoring for UI transparency"""
-    deterministic: int
-    probabilistic: int
-    trust_bonus: int
-    net_score: int
+    base_risk: int
+    multiplier: float
+    trust_offset: int
+    has_critical: bool
 
 class ScanResponse(BaseModel):
     id: str
@@ -38,6 +38,7 @@ class ScanResponse(BaseModel):
     location: Optional[str] = "Not Found"
     score: int
     label: str
+    justification: Optional[List[str]] = []
     # Score breakdown for UI transparency
     score_breakdown: Optional[ScoreBreakdown] = None
     findings: List[Finding]
